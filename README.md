@@ -40,6 +40,12 @@ without too much trouble:
 (def * (fn (a n) (if (= n 0) 0 (+ a (* a (- n 1))))))
 ```
 
+Lust can also read source files. For your convience, all of these
+functions can be loaded into a REPL by running:
+
+```
+cargo run std.ls
+```
 
 ## Lust Docs
 
