@@ -73,6 +73,10 @@ on the result of the cond expression. In lust 0 is false and all other
 numbers are true. Non-numeric values are not valid conditional
 expressions.
 
+### (print [expression])
+
+Evaluates expression and then prints the result to std::oi. Returns 1.
+
 ### (list [a_1] .. [a_n])
 
 Returns a list from its arguments. The arguments are evaluated.

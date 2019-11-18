@@ -3,6 +3,9 @@ use std::num::ParseFloatError;
 use std::fmt;
 use std::io::{self, Write};
 use std::rc::Rc;
+use std::env;
+use std::fs::File;
+use std::io::prelude::*;
 
 #[derive(Clone)]
 enum LustExpr
@@ -228,6 +231,23 @@ fn get_default_env<'a>() -> LustEnv<'a>
             }
         )
     );
+    data.insert(
+        "print".to_string(),
+        LustExpr::Func(
+            |args: &[LustExpr]| -> Result<LustExpr, LustErr>
+            {
+                if args.len() > 1
+                {
+                    return Err(
+                        LustErr::Reason("print expects only 1 argument.".to_string()))
+                }
+                let ex = args.first().ok_or(
+                    LustErr::Reason("print got no arguments.".to_string()))?;
+                println!("{}", format!("{}", ex.to_string()));
+                Ok(LustExpr::Number(1.0))
+            }
+        )
+    );
     LustEnv {data, outer: None}
 }
 
@@ -422,27 +442,6 @@ fn eval_eval_args(arg_forms: &[LustExpr], env: &mut LustEnv) -> Result<LustExpr,
         }
         Err(e) => Err(e),
     }
-        
-    // let mut resolved: Vec<LustExpr> = vec![];
-    // for r in arg_forms.iter().map( |ex| eval(ex, env) )
-    // {
-    //     match r
-    //     {
-    //         Ok(r) => resolved.push(r),
-    //         Err(e) => return Err(e),
-    //     }
-    // }
-
-    // let mut res: Vec<LustExpr> = vec![];
-    // for r in resolved.iter().map( |ex| eval(ex, env) )
-    // {
-    //     match r
-    //     {
-    //         Ok(r) => res.push(r),
-    //         Err(e) => return Err(e),
-    //     }
-    // }
-    // Ok(LustExpr::List(res))
 }
 
 fn eval_lambda_args(arg_forms: &[LustExpr]) -> Result<LustExpr, LustErr>
@@ -570,9 +569,54 @@ fn slurp_expr() -> String
     expr
 }
 
+fn read_file(filename: &String) -> std::io::Result<String>
+{
+    let mut file = File::open(filename)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    Ok(contents)
+}
+
+fn slurp_file(buffer: &String, env: &mut LustEnv) -> Result<(), LustErr>
+{
+    let mut tokens = tokenize(buffer.to_string());
+    loop
+    {
+        if tokens.len() == 0
+        {
+            return Ok(())
+        }
+        let (parsed_expr, tokens_) = parse(&tokens)?;
+        tokens = tokens_.to_vec();
+        eval(&parsed_expr, env)?;
+    }
+}
+
 fn main()
 {
-    let env = &mut get_default_env();
+    let mut env = &mut get_default_env();
+
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() == 2
+    {
+        match read_file(&args[1])
+        {
+            Ok(buff) => match slurp_file(&buff, &mut env)
+            {
+                Ok(_) => println!("Read in source file."),
+                Err(e) => match e {
+                    LustErr::Reason(msg) => println!("//   => {}", msg),
+                },
+            },
+            Err(_) => println!("Failed to read file"),
+        }
+    }
+    if args.len() > 2
+    {
+        println!("Usage: lust <filemane>");
+    }
+    
     loop
     {
         print!("lust > ");
