@@ -18,26 +18,69 @@ encompasses the entire language minus list processing:
 
 The goal of lust is to define a language with as little machinery as
 possible. As much as possible, Lust should be written in Lust. In
-order to have the notion of equality, we define it as not less than
-and not more than:
+order to have the notion of equality, we must implement it.
 
 ```lisp
-(def = (fn (a b) (if (< a b) 0 (if (> a b) 0 1))))
+(def = (fn (a b)
+     (if (err? (+ a 1))
+     	 (if (err? (+ b 1)) (list= a b) 0)
+	 (if (err? (+ b 1)) 0 (float= a b)))))
+
 ```
 
-For subtraction, we need a way to compute the additive inverse. This
-function works only for positive integers, but does the job for them:
+First, we test to see if we can add one to the input. If we can we
+call `float=` which compares floats, if we can not, we call `list=`
+which compares lists. We can define those two functions as follows:
 
 ```lisp
-(def add_inv (fn (n guess) (if (= 0 (+ n guess)) guess (add_inv n (+ guess -1)))))
+(def float= (fn (a b)
+     (if (< a b) 0
+     	 (if (> a b) 0 1))))
+
+(def list= (fn (a b)
+     (if (nil? a)
+     	 (if (nil? b) 1 0)
+	 (if (nil? b) 0
+	     (if (= (first a) (first b))
+	     	 (= (rest a) (rest b))
+	     	 0)))))
+```
+
+At this point, you've seen the vast majority of Lust's builtin
+functions. Now we'll define some more math operations.
+
+For subtraction, we need a way to compute the additive inverse. At the
+moment, I have yet to work out a good way to do this for non-whole
+numbers. For whole numbers though, we can define the additive inverse
+as follows:
+
+```lisp
+(def add-inv-pos (fn (n guess)
+     (if (= (+ n guess) 0) guess
+     	(add-inv-pos n (+ guess -1)))))
+
+(def add-inv-neg (fn (n guess)
+     (if (= (+ n guess) 0) guess
+     	 (add-inv-neg n (+ guess 1)))))
+
+(def add-inv (fn (n)
+     (if (< n 0)
+     	 (add-inv-neg n n)
+     	 ( if ( > n 0 )
+	   (add-inv-pos n n)
+	   0))))
 ```
 
 Once we have that, we can define subtraction and multiplication
 without too much trouble:
 
 ```lisp
-(def - (fn (a b) (+ a (add_inv b b))))
-(def * (fn (a n) (if (= n 0) 0 (+ a (* a (- n 1))))))
+(def - (fn (a b)
+     (+ a (add_inv b b))))
+
+(def * (fn (a n)
+     (if (= n 0) 0
+     	 (+ a (* a (- n 1))))))
 ```
 
 Lust can also read source files. For your convience, all of these
@@ -78,6 +121,11 @@ expression and the evaluates its true or false expression conditional
 on the result of the cond expression. In lust 0 is false and all other
 numbers are true. Non-numeric values are not valid conditional
 expressions.
+
+### (err? [expression])
+
+Evaluates expression and returns 1 if it resulted in an error, 0
+otherwise. The error will not be printed to stderr.
 
 ### (print [expression])
 
