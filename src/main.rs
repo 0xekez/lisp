@@ -409,7 +409,11 @@ fn eval_builtin_form(
                 "fn"   => Some(eval_lambda_args(arg_forms)),
                 "if"   => Some(eval_if_args(arg_forms, env)),
                 "eval" => Some(eval_eval_args(arg_forms, env)),
-                    //eval(&LustExpr::List(arg_forms.to_vec()), env)),
+                "err?" => match eval_eval_args(arg_forms, env)
+                {
+                    Ok(_) => Some(Ok(LustExpr::Number(0.0))),
+                    Err(_) => Some(Ok(LustExpr::Number(1.0))),
+                },
                 _ => None,
             },
         _ => None,
