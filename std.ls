@@ -31,7 +31,7 @@
 	   0))))
 
 (def - (fn (a b)
-     (+ a (add_inv b b))))
+     (+ a (add-inv b))))
 
 (def * (fn (a n)
      (if (= n 0) 0
