@@ -7,6 +7,9 @@ use std::io::{self, Write};
 use std::num::ParseFloatError;
 use std::rc::Rc;
 
+use lust::parser::{Error, Parser};
+use lust::tokenizer::{Location, TokenType, Tokenizer};
+
 #[derive(Clone)]
 enum LustExpr {
     Symbol(String),
@@ -473,35 +476,23 @@ fn slurp_file(buffer: &String, env: &mut LustEnv) -> Result<(), LustErr> {
 }
 
 fn main() {
-    let mut env = &mut get_default_env();
-
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() == 2 {
-        match read_file(&args[1]) {
-            Ok(buff) => match slurp_file(&buff, &mut env) {
-                Ok(_) => println!("Read in source file."),
-                Err(e) => match e {
-                    LustErr::Reason(msg) => println!("//   => {}", msg),
-                },
-            },
-            Err(_) => println!("Failed to read file"),
-        }
-    }
-    if args.len() > 2 {
-        println!("Usage: lust <filemane>");
-    }
-
-    loop {
-        print!("lust > ");
-        // Need to flush so output doesn't get line buffered.
-        io::stdout().flush().unwrap();
-        let expr = slurp_expr();
-        match parse_eval(expr, env) {
-            Ok(res) => println!("//   => {}", res),
-            Err(e) => match e {
-                LustErr::Reason(msg) => println!("//   => {}", msg),
-            },
-        }
-    }
+    // loop {
+    //     let next_line = slurp_expr();
+    //     let mut tokenizer = Tokenizer::new(&next_line);
+    //     let mut token = tokenizer.next_token();
+    //     while token.token != TokenType::Eof {
+    //         println!("{:?}", token);
+    //         token = tokenizer.next_token();
+    //     }
+    // }
+    let source = ("(+ 10.0.0 5)");
+    let parser = Parser::new(source);
+    let error = Error {
+        loc: Location {
+            col_start: 3,
+            col_end: 9,
+        },
+        what: "malformed expression".to_string(),
+    };
+    parser.show_error(&error);
 }
