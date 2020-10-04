@@ -1,3 +1,8 @@
+/// Handles tokenization of Lust programs.
+use crate::parser::Error;
+
+use std::fmt;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
     Number(f32),
@@ -25,6 +30,60 @@ pub struct Token {
 pub struct Tokenizer<'a> {
     input: &'a str,
     position: usize,
+}
+
+#[derive(Debug)]
+pub struct TokenBuffer<'a> {
+    tokenizer: Tokenizer<'a>,
+    peek: Token,
+}
+
+impl<'a> TokenBuffer<'a> {
+    pub fn new(input: &'a str) -> Self {
+        let mut tokenizer = Tokenizer::new(input);
+        let peek = tokenizer.next_token();
+        Self { tokenizer, peek }
+    }
+    pub fn peek_token(&self) -> &Token {
+        &self.peek
+    }
+    pub fn has_next(&self) -> bool {
+        return self.peek.token != TokenType::Eof;
+    }
+    pub fn next_token(&mut self) -> Token {
+        let res = self.peek.clone();
+        self.peek = self.tokenizer.next_token();
+        res
+    }
+    pub fn expect_token_matching(&mut self, tok: TokenType) -> Result<Token, Error> {
+        let next = self.next_token();
+        if next.token == tok {
+            Ok(next)
+        } else {
+            Err(Error::on_tok(
+                &format!("expected {} but got {}", tok, next.token),
+                &next,
+            ))
+        }
+    }
+}
+
+impl fmt::Display for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                TokenType::Cparen => ")",
+                TokenType::Oparen => "(",
+                TokenType::Eof => "<eof>",
+                TokenType::Id(_) => "identifier",
+                TokenType::String(_) => "string",
+                TokenType::Number(_) => "number",
+                TokenType::Unrecognized(_) => "<unrecognized>",
+            }
+        )
+    }
 }
 
 impl Token {
@@ -149,7 +208,7 @@ impl<'a> Tokenizer<'a> {
         if valid {
             Token::new(start_pos, self.position, TokenType::String(res))
         } else {
-            Token::new(start_pos, self.position, TokenType::String(res))
+            Token::new(start_pos, self.position, TokenType::Unrecognized(res))
         }
     }
 

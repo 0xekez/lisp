@@ -1,140 +1,204 @@
-use crate::tokenizer::{Location, Token, TokenType};
+// Handles parsing of Lust expressions and emits some parse errors
+// along the way.
+use crate::tokenizer::{Location, Token, TokenBuffer, TokenType};
 use colored::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Error {
     pub loc: Location,
     pub what: String,
 }
 
 #[derive(Debug)]
-pub struct Parser<'a> {
-    source: &'a str,
-    // tokens: Vec<Token>,
-    // loc: usize,
-    // program: Program,
+pub struct ParseResult {
+    pub expr: Option<Expr>,
+    pub errors: Vec<Error>,
 }
 
-#[derive(Debug, Clone)]
-pub enum Expr {
+#[derive(Debug)]
+pub struct Parser<'a> {
+    source: &'a str,
+    tokens: TokenBuffer<'a>,
+}
+
+#[derive(Debug)]
+pub enum ExprVal {
     Number(f32),
     String(String),
     List(Vec<Expr>),
+    Id(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+pub struct Expr {
+    expr: ExprVal,
+    loc: Location,
+}
+
+#[derive(Debug)]
 pub struct Program {
     program: Vec<Expr>,
     errors: Vec<Error>,
 }
 
-impl Program {
-    fn new() -> Self {
+impl Expr {
+    pub fn new(start: &Token, end: &Token, expr: ExprVal) -> Self {
         Self {
-            program: Vec::new(),
-            errors: Vec::new(),
+            expr,
+            loc: Location {
+                col_start: start.loc.col_start,
+                col_end: end.loc.col_end,
+            },
         }
     }
 }
 
+impl ParseResult {
+    pub fn new() -> Self {
+        Self {
+            expr: None,
+            errors: vec![],
+        }
+    }
+    pub fn from_expr(expr: Expr) -> Self {
+        Self {
+            expr: Some(expr),
+            errors: vec![],
+        }
+    }
+    pub fn from_err(error: Error) -> Self {
+        Self {
+            expr: None,
+            errors: vec![error],
+        }
+    }
+    pub fn merge_errors(&mut self, mut other: Self) {
+        println!("merge errroes");
+        self.errors.append(&mut other.errors);
+    }
+    pub fn merge_err(&mut self, err: Error) {
+        self.errors.push(err);
+    }
+}
+
 impl Error {
-    fn new(what: &str, token: &Token) -> Self {
+    pub fn on_tok(what: &str, token: &Token) -> Self {
         Self {
             loc: token.loc.clone(),
             what: what.to_string(),
         }
     }
-}
 
-impl<'a> Parser<'a> {
-    pub fn new(source: &'a str, // , tokens: Vec<Token>
-    ) -> Self {
+    pub fn on_expr(what: &str, expr: &Expr) -> Self {
         Self {
-            source: source,
-            // tokens: tokens,
-            // loc: 0,
-            // program: Program::new(),
+            loc: expr.loc.clone(),
+            what: what.to_string(),
         }
     }
 
-    // fn has_next(&self) -> bool {
-    //     self.loc < self.tokens.len()
-    // }
-    // fn peek_token(&self) -> &Token {
-    //     &self.tokens[self.loc]
-    // }
-    // fn peek_tok_type(&self) -> &TokenType {
-    //     &self.peek_token().token
-    // }
-    // fn advance(&mut self) {
-    //     self.loc += 1;
-    // }
-
-    // fn parse_list(&self) -> Result<Expr, Error> {}
-
-    // pub fn parse_expr(&mut self) -> Result<Expr, Error> {
-    //     if !self.has_next() {
-    //         return Err(Error::new(
-    //             "unexpected end of file",
-    //             self.tokens[self.tokens.len() - 2],
-    //         ));
-    //     }
-    //     match self.peek_token().token {
-    //         TokenType::Oparen => Ok(self.parse_list()),
-    //         TokenType::Cparen => Err(self.error_on_tok),
-    //         TokenType::Number(f) => {
-    //             self.advance();
-    //             Ok(Expr::Number(f))
-    //         }
-    //     }
-    // }
-
-    // pub fn parse(&mut self) -> Program {
-    //     let program = Program::new();
-    //     while self.peek_token.token != TokenType::Eof {
-    //         let res = self.parse_expr();
-    //     }
-    //     self.program.clone()
-    // }
-
-    // fn error_on_tok(&mut self, what: &str) {
-    //     let token = self.peek_token();
-    //     let err = Error {
-    //         loc: token.loc.clone(),
-    //         what: what.to_string(),
-    //     };
-    //     self.show_error(&err);
-    //     self.program.errors.push(err);
-    // }
-
-    fn underline_error(error: &Error) {
+    fn underline_error(&self) {
         print!(" |  ");
-        for _ in 0..error.loc.col_start {
+        for _ in 0..self.loc.col_start {
             print!(" ");
         }
         print!("^");
-        for _ in 0..(error.loc.col_end - error.loc.col_start - 1) {
+        for _ in 0..(self.loc.col_end - self.loc.col_start - 1) {
             print!("-");
         }
         println!("");
     }
 
-    fn show_error_message(error: &Error) {
+    fn show_error_message(&self) {
         print!(" |  ");
-        for _ in 0..error.loc.col_start {
+        for _ in 0..self.loc.col_start {
             print!(" ");
         }
         print!("{}: ", "error".magenta());
-        println!("{}", error.what);
+        println!("{}", self.what);
     }
 
     // (+ 10.0.0 5)
     //    ^-----
     //    error: malformed expression
-    pub fn show_error(&self, error: &Error) {
-        println!("\n |  {}", self.source);
-        Self::underline_error(error);
-        Self::show_error_message(error);
-        println!("");
+    pub fn show_error(&self, source: &str) {
+        // FIXME: this assumes that source is terminated by a newline.
+        print!(" |  {}", source);
+        self.underline_error();
+        self.show_error_message();
+    }
+}
+
+impl<'a> Parser<'a> {
+    pub fn new(source: &'a str) -> Self {
+        Self {
+            source: source,
+            tokens: TokenBuffer::new(source),
+        }
+    }
+
+    // Collect list of errors and list of expressions.
+    pub fn parse_list(&mut self) -> ParseResult {
+        let mut res = ParseResult::new();
+        let oparen = self.tokens.next_token();
+        let mut v = Vec::new();
+
+        let predicate = self.parse_expr();
+        match predicate.expr {
+            Some(e) => match e.expr {
+                ExprVal::Id(_) => (),
+                _ => res.merge_err(Error::on_expr("invalid list predicate", &e)),
+            },
+            None => res.merge_errors(predicate),
+        }
+
+        let end_tok = loop {
+            match self.tokens.peek_token().token {
+                TokenType::Cparen => {
+                    break self.tokens.next_token();
+                }
+                TokenType::Eof => {
+                    res.merge_err(Error::on_tok("unbalanced parenthesis", &oparen));
+                    break self.tokens.next_token();
+                }
+                _ => (),
+            }
+            let mut pr = self.parse_expr();
+            if let Some(e) = pr.expr {
+                v.push(e);
+            }
+            res.errors.append(&mut pr.errors);
+        };
+        res.expr = Some(Expr::new(&oparen, &end_tok, ExprVal::List(v)));
+        res
+    }
+
+    pub fn parse_expr(&mut self) -> ParseResult {
+        match self.tokens.peek_token().token.clone() {
+            TokenType::Oparen => self.parse_list(),
+            TokenType::Cparen => ParseResult::from_err(Error::on_tok(
+                "unexpected closing paren",
+                &self.tokens.next_token(),
+            )),
+            TokenType::Number(f) => ParseResult::from_expr(Expr {
+                expr: ExprVal::Number(f),
+                loc: self.tokens.next_token().loc,
+            }),
+            TokenType::Id(s) => ParseResult::from_expr(Expr {
+                expr: ExprVal::Id(s),
+                loc: self.tokens.next_token().loc,
+            }),
+            TokenType::String(s) => ParseResult::from_expr(Expr {
+                expr: ExprVal::String(s),
+                loc: self.tokens.next_token().loc,
+            }),
+            TokenType::Eof => ParseResult::from_err(Error::on_tok(
+                "unexpected end of file",
+                &self.tokens.next_token(),
+            )),
+            TokenType::Unrecognized(_) => ParseResult::from_err(Error::on_tok(
+                "malformed expression",
+                &self.tokens.next_token(),
+            )),
+        }
     }
 }
