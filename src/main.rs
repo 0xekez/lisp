@@ -1,6 +1,8 @@
+use lust::tokenizer::Tokenizer;
 use std::io;
 
-use lust::parser::Parser;
+// use lust::errors::Printable;
+// use lust::parser::Parser;
 
 fn get_line() -> String {
     let mut expr = String::new();
@@ -15,17 +17,7 @@ fn get_line() -> String {
 fn main() {
     loop {
         let source = get_line();
-        let mut parser = Parser::new(&source);
-        let res = parser.parse_expr();
-        if res.errors.is_empty() {
-            if let Some(e) = res.expr {
-                println!("{:?}", e);
-            }
-        } else {
-            for err in res.errors {
-                err.show_error(&source);
-            }
-            println!();
-        }
+        let mut tokenizer = Tokenizer::new(&source);
+        println!("{:?}", tokenizer.next_token());
     }
 }

@@ -1,13 +1,7 @@
-// Handles parsing of Lust expressions and emits some parse errors
-// along the way.
+/// Handles parsing of Lust expressions and emits some parse errors
+/// along the way.
+use crate::errors::Error;
 use crate::tokenizer::{Location, Token, TokenBuffer, TokenType};
-use colored::*;
-
-#[derive(Debug)]
-pub struct Error {
-    pub loc: Location,
-    pub what: String,
-}
 
 #[derive(Debug)]
 pub struct ParseResult {
@@ -31,8 +25,8 @@ pub enum ExprVal {
 
 #[derive(Debug)]
 pub struct Expr {
-    expr: ExprVal,
-    loc: Location,
+    pub expr: ExprVal,
+    pub loc: Location,
 }
 
 #[derive(Debug)]
@@ -73,58 +67,10 @@ impl ParseResult {
         }
     }
     pub fn merge_errors(&mut self, mut other: Self) {
-        println!("merge errroes");
         self.errors.append(&mut other.errors);
     }
     pub fn merge_err(&mut self, err: Error) {
         self.errors.push(err);
-    }
-}
-
-impl Error {
-    pub fn on_tok(what: &str, token: &Token) -> Self {
-        Self {
-            loc: token.loc.clone(),
-            what: what.to_string(),
-        }
-    }
-
-    pub fn on_expr(what: &str, expr: &Expr) -> Self {
-        Self {
-            loc: expr.loc.clone(),
-            what: what.to_string(),
-        }
-    }
-
-    fn underline_error(&self) {
-        print!(" |  ");
-        for _ in 0..self.loc.col_start {
-            print!(" ");
-        }
-        print!("^");
-        for _ in 0..(self.loc.col_end - self.loc.col_start - 1) {
-            print!("-");
-        }
-        println!("");
-    }
-
-    fn show_error_message(&self) {
-        print!(" |  ");
-        for _ in 0..self.loc.col_start {
-            print!(" ");
-        }
-        print!("{}: ", "error".magenta());
-        println!("{}", self.what);
-    }
-
-    // (+ 10.0.0 5)
-    //    ^-----
-    //    error: malformed expression
-    pub fn show_error(&self, source: &str) {
-        // FIXME: this assumes that source is terminated by a newline.
-        print!(" |  {}", source);
-        self.underline_error();
-        self.show_error_message();
     }
 }
 
@@ -142,14 +88,18 @@ impl<'a> Parser<'a> {
         let oparen = self.tokens.next_token();
         let mut v = Vec::new();
 
-        let predicate = self.parse_expr();
-        match predicate.expr {
-            Some(e) => match e.expr {
-                ExprVal::Id(_) => (),
-                _ => res.merge_err(Error::on_expr("invalid list predicate", &e)),
-            },
-            None => res.merge_errors(predicate),
-        }
+        // If there is a predicate attempt to validate it. This is
+        // garbage and should be moved to the type checker.
+        // if self.tokens.peek_token().token != TokenType::Cparen {
+        //     let predicate = self.parse_expr();
+        //     match predicate.expr {
+        //         Some(e) => match e.expr {
+        //             ExprVal::Id(_) => (),
+        //             _ => res.merge_err(Error::on_expr("invalid list predicate", &e)),
+        //         },
+        //         None => res.merge_errors(predicate),
+        //     }
+        // }
 
         let end_tok = loop {
             match self.tokens.peek_token().token {
@@ -195,8 +145,8 @@ impl<'a> Parser<'a> {
                 "unexpected end of file",
                 &self.tokens.next_token(),
             )),
-            TokenType::Unrecognized(_) => ParseResult::from_err(Error::on_tok(
-                "malformed expression",
+            TokenType::Unrecognized(s) => ParseResult::from_err(Error::on_tok(
+                &Error::guess_intent(&s),
                 &self.tokens.next_token(),
             )),
         }
