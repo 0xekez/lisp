@@ -1,4 +1,4 @@
-// pub mod errors;
+pub mod errors;
 // pub mod parser;
 pub mod reader;
 pub mod tokenbuffer;

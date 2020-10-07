@@ -5,8 +5,8 @@ use std::iter;
 /// A location in a string.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Location {
-    line: usize,
-    col: usize,
+    pub line: usize,
+    pub col: usize,
 }
 
 /// A reader which yields characters from a SOURCE. The reader keeps

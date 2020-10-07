@@ -32,19 +32,19 @@ pub enum TokenType {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Location {
     /// The (line, column) index of the first character in the token.
-    start: reader::Location,
+    pub start: reader::Location,
     /// The (line, column) index of one past the last character in the
     /// token.
-    end: reader::Location,
+    pub end: reader::Location,
 }
 
 /// A token that the tokenizer will emit.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Token {
     /// The type of token that we're dealing with.
-    ttype: TokenType,
+    pub ttype: TokenType,
     /// The location of the token.
-    loc: Location,
+    pub loc: Location,
 }
 
 /// A tokenizer for a lust program.
@@ -83,11 +83,11 @@ impl<'a> Tokenizer<'a> {
         let start = self.reader.loc();
         self.reader.next();
         Token {
+            ttype,
             loc: Location {
                 start,
                 end: self.reader.loc(),
             },
-            ttype,
         }
     }
 

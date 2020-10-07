@@ -1,4 +1,3 @@
-use crate::parser::Expr;
 use crate::tokenizer::{Location, Token, TokenType};
 use colored::*;
 
@@ -6,7 +5,7 @@ use colored::*;
 pub struct Error {
     pub loc: Location,
     pub what: String,
-    suggest: Option<Suggestion>,
+    suggestion: Option<Suggestion>,
 }
 
 #[derive(Debug)]
@@ -20,35 +19,89 @@ pub trait Printable {
     fn get_message(&self) -> &String;
     fn print_name(&self);
 
-    fn underline_loc(&self) {
-        print!(" |  ");
-        for _ in 0..self.get_loc().col_start {
+    /// Shows the filename for the current printable.
+    fn show_file(file: &str, line: usize, col: usize) {
+        for _ in 0..col {
+            print!(" ");
+        }
+        println!(
+            "*--> {}",
+            format!("{}:{}:{}", file, line, col,).bright_blue()
+        );
+    }
+
+    /// Shows the message for the current printable. For example:
+    /// `error: malformed string`
+    fn show_message(&self, file: &str) {
+        let mystart = self.get_loc().start;
+        for _ in 0..mystart.col {
+            print!(" ");
+        }
+        print!("|  ");
+        self.print_name();
+        println!(": {}", self.get_message());
+        Self::show_file(file, mystart.line, mystart.col);
+    }
+
+    /// Writes an underline to the console in the range [start, end)
+    fn underline_between(start: usize, end: usize) {
+        for _ in 0..start {
             print!(" ");
         }
         print!("^");
-        for _ in 0..(self.get_loc().col_end - self.get_loc().col_start - 1) {
-            print!("-");
+        for _ in (start + 1)..end {
+            print!("-")
         }
-        println!("");
+        println!();
     }
 
-    fn show_message(&self) {
-        print!(" |  ");
-        for _ in 0..self.get_loc().col_start {
+    /// Shows a multi line printable
+    fn show_multi_line(&self, source: &str, file: &str) {
+        let startloc = self.get_loc().start;
+        let endloc = self.get_loc().end;
+        let lines: Vec<_> = source.lines().collect();
+
+        let startline = lines[startloc.line];
+        println!("{}", startline);
+        Self::underline_between(startloc.col, startline.len());
+        self.show_message(file);
+        println!();
+        let endline = lines[endloc.line];
+        println!("{}", endline);
+        // start underline at first non-whitespace character if
+        // possible.
+        let start = if let Some(i) = endline.find(|c: char| !c.is_ascii_whitespace()) {
+            i
+        } else {
+            0
+        };
+        Self::underline_between(start, endloc.col);
+        for _ in 0..start {
             print!(" ");
         }
-        self.print_name();
-        println!(": {}", self.get_message());
+        print!("|  ");
+        println!("{}: error ends here", "note".bright_cyan());
+        Self::show_file(file, self.get_loc().end.line, start);
     }
 
-    // (+ 10.0.0 5)
-    //    ^-----
-    //    error: malformed expression
-    fn show(&self, source: &str) {
-        // FIXME: this assumes that source is terminated by a newline.
-        print!(" |  {}", source);
-        self.underline_loc();
-        self.show_message();
+    /// Prints a printable in the following format:
+    /// (+ 10.0.0 5)
+    ///    ^-----
+    ///    error: malformed expression
+    ///      --> std.lisp:1:41
+    /// TODO: when we implement reading from files this needs to work.
+    fn show(&self, source: &str, file: &str) {
+        let startloc = self.get_loc().start;
+        let endloc = self.get_loc().end;
+        if startloc.line != endloc.line {
+            self.show_multi_line(source, file);
+            return;
+        }
+        let lines: Vec<_> = source.lines().collect();
+        let line = lines[startloc.line];
+        println!("{}", line);
+        Self::underline_between(startloc.col, endloc.col);
+        self.show_message(file);
     }
 }
 
@@ -61,14 +114,6 @@ impl Printable for Error {
     }
     fn print_name(&self) {
         print!("{}", "error".magenta());
-    }
-    fn show(&self, source: &str) {
-        print!(" |  {}", source);
-        self.underline_loc();
-        self.show_message();
-        if let Some(ref s) = self.suggest {
-            s.show_message();
-        }
     }
 }
 
@@ -89,26 +134,12 @@ impl Error {
         Self {
             loc: token.loc.clone(),
             what: what.to_string(),
-            suggest: Suggestion::on_tok(token),
+            suggestion: Suggestion::on_tok(token),
         }
     }
-
-    pub fn on_expr(what: &str, expr: &Expr) -> Self {
-        Self {
-            loc: expr.loc.clone(),
-            what: what.to_string(),
-            suggest: None,
-        }
-    }
-
-    pub fn guess_intent(what: &String) -> String {
-        if what.chars().all(|c| c.is_numeric() || c == '.') {
-            "malformed number".to_string()
-        } else if what.chars().any(|c| c == '"') {
-            "malformed string".to_string()
-        } else {
-            "malformed expression".to_string()
-        }
+    pub fn from_raw(s_line: usize, s_col: usize, e_line: usize, e_col: usize, what: &str) -> Self {
+        let tok = Token::from_raw(s_line, s_col, e_line, e_col, TokenType::Eof);
+        Self::on_tok(what, &tok)
     }
 }
 
@@ -138,13 +169,14 @@ impl Suggestion {
     }
 
     pub fn on_tok(token: &Token) -> Option<Self> {
-        if let TokenType::Unrecognized(s) = &token.token {
-            match &Error::guess_intent(s)[..] {
-                "malformed string" => Self::string_suggestion(s, &token.loc),
-                &_ => None,
-            }
-        } else {
-            None
-        }
+        // if let TokenType::Unrecognized(s, box TokenType::String(_)) = &token.ttype {
+        //     match &Error::guess_intent(s)[..] {
+        //         "malformed string" => Self::string_suggestion(s, &token.loc),
+        //         &_ => None,
+        //     }
+        // } else {
+        //     None
+        // }
+        None
     }
 }
