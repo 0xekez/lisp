@@ -1,5 +1,6 @@
 pub mod errors;
-// pub mod parser;
+pub mod location;
+pub mod parser;
 pub mod reader;
 pub mod tokenbuffer;
 pub mod tokenizer;

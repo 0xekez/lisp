@@ -1,4 +1,5 @@
-use crate::tokenizer::{Location, Token, TokenType};
+use crate::location::Location;
+use crate::tokenizer::{Token, TokenType};
 use colored::*;
 
 #[derive(Debug)]
@@ -137,8 +138,21 @@ impl Error {
             suggestion: Suggestion::on_tok(token),
         }
     }
+    pub fn at_loc(what: &str, loc: &Location) -> Self {
+        Self {
+            loc: loc.clone(),
+            what: what.to_string(),
+            suggestion: None,
+        }
+    }
     pub fn from_raw(s_line: usize, s_col: usize, e_line: usize, e_col: usize, what: &str) -> Self {
-        let tok = Token::from_raw(s_line, s_col, e_line, e_col, TokenType::Eof);
+        let tok = Token::from_raw(
+            s_line,
+            s_col,
+            e_line,
+            e_col,
+            TokenType::Id("filler".to_string()),
+        );
         Self::on_tok(what, &tok)
     }
 }
@@ -168,7 +182,7 @@ impl Suggestion {
         }
     }
 
-    pub fn on_tok(token: &Token) -> Option<Self> {
+    pub fn on_tok(_token: &Token) -> Option<Self> {
         // if let TokenType::Unrecognized(s, box TokenType::String(_)) = &token.ttype {
         //     match &Error::guess_intent(s)[..] {
         //         "malformed string" => Self::string_suggestion(s, &token.loc),

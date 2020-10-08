@@ -1,5 +1,4 @@
-/// Handles tokenization of Lust programs. Each token is stored with
-/// its start and end line and column.
+use crate::location::Location;
 use crate::reader::{self, Reader};
 
 /// A token type. When paired with a location makes a token.
@@ -12,8 +11,6 @@ pub enum TokenType {
     /// does not contain the opening and closing quotes. The \n and \t
     /// escape sequences are supported.
     String(String),
-    /// The end of file.
-    Eof,
     /// Opening parenthesis.
     Oparen,
     /// Closing parenthesis.
@@ -28,16 +25,6 @@ pub enum TokenType {
     Unrecognized(String, Box<TokenType>),
 }
 
-/// A location in the tokenizer. Stores in the form [start, end)
-#[derive(Debug, PartialEq, Clone)]
-pub struct Location {
-    /// The (line, column) index of the first character in the token.
-    pub start: reader::Location,
-    /// The (line, column) index of one past the last character in the
-    /// token.
-    pub end: reader::Location,
-}
-
 /// A token that the tokenizer will emit.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Token {
@@ -48,6 +35,7 @@ pub struct Token {
 }
 
 /// A tokenizer for a lust program.
+#[derive(Debug)]
 pub struct Tokenizer<'a> {
     reader: Reader<'a>,
 }
@@ -58,6 +46,15 @@ impl<'a> Tokenizer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             reader: Reader::new(input),
+        }
+    }
+
+    /// Gets the current location of the tokenizer in the source
+    /// string.
+    pub fn loc(&self) -> Location {
+        Location {
+            start: self.reader.loc(),
+            end: self.reader.loc(),
         }
     }
 

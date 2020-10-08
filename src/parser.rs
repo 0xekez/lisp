@@ -1,21 +1,33 @@
 /// Handles parsing of Lust expressions and emits some parse errors
 /// along the way.
 use crate::errors::Error;
-use crate::tokenizer::{Location, Token, TokenBuffer, TokenType};
+use crate::location::Location;
+use crate::tokenbuffer::TokenBuffer;
+use crate::tokenizer::{Token, TokenType};
 
+/// Used internally by the parser to store information about the state
+/// of the parse.
 #[derive(Debug)]
 pub struct ParseResult {
+    /// Holds the expression being parsed if we succeded in parsing
+    /// any of it.
     pub expr: Option<Expr>,
+    /// A list of errors that occured during the current parse.
     pub errors: Vec<Error>,
 }
 
+/// The parser for Lust programs.
 #[derive(Debug)]
 pub struct Parser<'a> {
+    /// The source string that we're parsing. We keep a reference to
+    /// this arround for emitting errors.
     source: &'a str,
+    /// A token buffer that will be associated with SOURCE.
     tokens: TokenBuffer<'a>,
 }
 
-#[derive(Debug)]
+/// An expression's value.
+#[derive(Debug, PartialEq)]
 pub enum ExprVal {
     Number(f32),
     String(String),
@@ -23,9 +35,12 @@ pub enum ExprVal {
     Id(String),
 }
 
-#[derive(Debug)]
+/// An expression. Holds a value and a location.
+#[derive(Debug, PartialEq)]
 pub struct Expr {
-    pub expr: ExprVal,
+    /// The vallue of the expression.
+    pub val: ExprVal,
+    /// Where in the source that this expression lives.
     pub loc: Location,
 }
 
@@ -38,12 +53,12 @@ pub struct Program {
 impl Expr {
     pub fn new(start: &Token, end: &Token, expr: ExprVal) -> Self {
         Self {
-            expr,
-            loc: Location {
-                col_start: start.loc.col_start,
-                col_end: end.loc.col_end,
-            },
+            val: expr,
+            loc: Location::union(&start.loc, &end.loc),
         }
+    }
+    pub fn at_loc(loc: Location, val: ExprVal) -> Self {
+        Self { loc, val }
     }
 }
 
@@ -83,72 +98,149 @@ impl<'a> Parser<'a> {
     }
 
     // Collect list of errors and list of expressions.
-    pub fn parse_list(&mut self) -> ParseResult {
+    fn parse_list(&mut self, oparen: Token) -> ParseResult {
         let mut res = ParseResult::new();
-        let oparen = self.tokens.next_token();
         let mut v = Vec::new();
-
-        // If there is a predicate attempt to validate it. This is
-        // garbage and should be moved to the type checker.
-        // if self.tokens.peek_token().token != TokenType::Cparen {
-        //     let predicate = self.parse_expr();
-        //     match predicate.expr {
-        //         Some(e) => match e.expr {
-        //             ExprVal::Id(_) => (),
-        //             _ => res.merge_err(Error::on_expr("invalid list predicate", &e)),
-        //         },
-        //         None => res.merge_errors(predicate),
-        //     }
-        // }
-
-        let end_tok = loop {
-            match self.tokens.peek_token().token {
-                TokenType::Cparen => {
-                    break self.tokens.next_token();
-                }
-                TokenType::Eof => {
+        loop {
+            match self.tokens.peek_token() {
+                Some((tok, buffer)) => match tok.ttype {
+                    TokenType::Cparen => {
+                        buffer.advance();
+                        break;
+                    }
+                    _ => (),
+                },
+                None => {
                     res.merge_err(Error::on_tok("unbalanced parenthesis", &oparen));
-                    break self.tokens.next_token();
+                    break;
                 }
-                _ => (),
             }
             let mut pr = self.parse_expr();
             if let Some(e) = pr.expr {
                 v.push(e);
             }
             res.errors.append(&mut pr.errors);
+        }
+
+        let start = &oparen.loc;
+        let end = match &v.first() {
+            Some(ref e) => &e.loc,
+            None => start,
         };
-        res.expr = Some(Expr::new(&oparen, &end_tok, ExprVal::List(v)));
+        res.expr = Some(Expr::at_loc(Location::union(start, end), ExprVal::List(v)));
         res
     }
 
     pub fn parse_expr(&mut self) -> ParseResult {
-        match self.tokens.peek_token().token.clone() {
-            TokenType::Oparen => self.parse_list(),
-            TokenType::Cparen => ParseResult::from_err(Error::on_tok(
-                "unexpected closing paren",
-                &self.tokens.next_token(),
-            )),
-            TokenType::Number(f) => ParseResult::from_expr(Expr {
-                expr: ExprVal::Number(f),
-                loc: self.tokens.next_token().loc,
-            }),
-            TokenType::Id(s) => ParseResult::from_expr(Expr {
-                expr: ExprVal::Id(s),
-                loc: self.tokens.next_token().loc,
-            }),
-            TokenType::String(s) => ParseResult::from_expr(Expr {
-                expr: ExprVal::String(s),
-                loc: self.tokens.next_token().loc,
-            }),
-            TokenType::Eof => ParseResult::from_err(Error::on_tok(
-                "unexpected end of file",
-                &self.tokens.next_token(),
-            )),
-            TokenType::Unrecognized(s) => ParseResult::from_err(Error::on_tok(
-                &Error::guess_intent(&s),
-                &self.tokens.next_token(),
-            )),
+        match self.tokens.peek_token() {
+            Some((t, buffer)) => match t.ttype {
+                TokenType::Oparen => {
+                    let tok = buffer.advance();
+                    self.parse_list(tok)
+                }
+                TokenType::Cparen => ParseResult::from_err(Error::on_tok(
+                    "unexpected closing paren",
+                    &buffer.advance(),
+                )),
+                TokenType::Number(f) => ParseResult::from_expr(Expr {
+                    val: ExprVal::Number(f),
+                    loc: buffer.advance().loc,
+                }),
+                TokenType::Id(s) => ParseResult::from_expr(Expr {
+                    val: ExprVal::Id(s),
+                    loc: buffer.advance().loc,
+                }),
+                TokenType::String(s) => ParseResult::from_expr(Expr {
+                    val: ExprVal::String(s),
+                    loc: buffer.advance().loc,
+                }),
+                TokenType::Unrecognized(s, _) => ParseResult::from_err(Error::on_tok(
+                    &format!("unrecognized token: {}", s),
+                    &buffer.advance(),
+                )),
+            },
+            None => {
+                let mut res = ParseResult::new();
+                res.merge_err(Error::at_loc(
+                    "unexpected end of input parsing expression",
+                    &self.tokens.loc(),
+                ));
+                res
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tokenizer::TokenType;
+
+    #[test]
+    fn empty_list() {
+        let src = "()";
+        let mut parser = Parser::new(&src);
+        let res = parser.parse_expr();
+        if let Some(e) = res.expr {
+            assert_eq!(ExprVal::List(vec![]), e.val);
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn single_number() {
+        let src = "1.5";
+        let mut parser = Parser::new(&src);
+        let res = parser.parse_expr();
+        if let Some(e) = res.expr {
+            assert_eq!(ExprVal::Number(1.5), e.val);
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn small_list() {
+        let src = "(1 hello \"hello\")";
+        let mut parser = Parser::new(&src);
+        let res = parser.parse_expr();
+        if let Some(e) = res.expr {
+            match e.val {
+                ExprVal::List(v) => {
+                    assert_eq!(v.len(), 3);
+                    assert_eq!(v[0].val, ExprVal::Number(1.0));
+                    assert_eq!(v[1].val, ExprVal::Id("hello".to_string()));
+                    assert_eq!(v[2].val, ExprVal::String("hello".to_string()));
+                }
+                _ => assert!(false),
+            }
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn small_bad_list() {
+        let src = "(1 hello \"hello\"";
+        let mut parser = Parser::new(&src);
+        let res = parser.parse_expr();
+        if let Some(e) = res.expr {
+            match e.val {
+                ExprVal::List(v) => {
+                    assert_eq!(v.len(), 3);
+                    assert_eq!(v[0].val, ExprVal::Number(1.0));
+                    assert_eq!(v[1].val, ExprVal::Id("hello".to_string()));
+                    assert_eq!(v[2].val, ExprVal::String("hello".to_string()));
+                }
+                _ => assert!(false),
+            }
+        } else {
+            assert!(false);
+        }
+        assert_eq!(res.errors.len(), 1);
+        // Note this test is liable to break. See issue #2 which
+        // tracks a better way to handle this.
+        assert_eq!(res.errors[0].what, "unbalanced parenthesis".to_string());
     }
 }
