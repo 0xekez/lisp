@@ -74,6 +74,12 @@ impl<'a> TokenBuffer<'a> {
         Self { tokenizer, peek }
     }
 
+    /// Returns true if the tokenbuffer has more tokens to
+    /// yield. Returns false otherwise.
+    pub fn has_next(&self) -> bool {
+        self.peek.is_some()
+    }
+
     /// Look at the next token without retreiving it. If there is no
     /// next token this will return None.
     pub fn peek_token(&mut self) -> Option<(Token, CheckedTokenBuffer<'_, 'a>)> {
@@ -93,6 +99,7 @@ impl<'a> TokenBuffer<'a> {
         }
     }
 
+    /// Gets the location of the tokenbuffer in the source string.
     pub fn loc(&self) -> Location {
         self.tokenizer.loc()
     }

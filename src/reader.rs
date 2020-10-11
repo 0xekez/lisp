@@ -39,6 +39,11 @@ impl<'a> Reader<'a> {
     fn update_loc(&mut self, c: char) {
         match c {
             '\n' => {
+                // If this newline is the last item in the input then
+                // it we shouldn't move to a new line because we've
+                // reached the end. Any location returned on that line
+                // will cause an index out of bounds error because the
+                // line doesn't actually have any content.
                 self.loc.col = 0;
                 self.loc.line += 1;
             }
@@ -68,7 +73,6 @@ impl<'a> Reader<'a> {
         if let Some(c) = c {
             self.update_loc(c);
         }
-        // self.skip_whitespace();
         c
     }
 

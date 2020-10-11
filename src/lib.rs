@@ -1,4 +1,5 @@
 pub mod errors;
+pub mod jit;
 pub mod location;
 pub mod parser;
 pub mod reader;

@@ -1,4 +1,5 @@
 use crate::location::Location;
+use crate::reader;
 use crate::tokenizer::{Token, TokenType};
 use colored::*;
 
@@ -66,23 +67,33 @@ pub trait Printable {
         println!("{}", startline);
         Self::underline_between(startloc.col, startline.len());
         self.show_message(file);
-        println!();
-        let endline = lines[endloc.line];
-        println!("{}", endline);
-        // start underline at first non-whitespace character if
-        // possible.
-        let start = if let Some(i) = endline.find(|c: char| !c.is_ascii_whitespace()) {
-            i
-        } else {
-            0
-        };
-        Self::underline_between(start, endloc.col);
-        for _ in 0..start {
-            print!(" ");
+
+        // When split into lines a string like "hello\n" will only
+        // return one line containing "hello", however the tokenizer
+        // will determine that the end line of the error is the first
+        // character on the second line. I'm not sure what a clean way
+        // to get around this is to be honest because it seems like
+        // this is a weird case where the errors ends on the -1th
+        // character of the second line. For now this hack exists.
+        if endloc.line < lines.len() {
+            println!();
+            let endline = lines[endloc.line];
+            println!("{}", endline);
+            // start underline at first non-whitespace character if
+            // possible.
+            let start = if let Some(i) = endline.find(|c: char| !c.is_ascii_whitespace()) {
+                i
+            } else {
+                0
+            };
+            Self::underline_between(start, endloc.col);
+            for _ in 0..start {
+                print!(" ");
+            }
+            print!("|  ");
+            println!("{}: error ends here", "note".bright_cyan());
+            Self::show_file(file, self.get_loc().end.line, start);
         }
-        print!("|  ");
-        println!("{}: error ends here", "note".bright_cyan());
-        Self::show_file(file, self.get_loc().end.line, start);
     }
 
     /// Prints a printable in the following format:
@@ -115,6 +126,24 @@ impl Printable for Error {
     }
     fn print_name(&self) {
         print!("{}", "error".magenta());
+    }
+
+    fn show(&self, source: &str, file: &str) {
+        let startloc = self.get_loc().start;
+        let endloc = self.get_loc().end;
+        if startloc.line != endloc.line {
+            self.show_multi_line(source, file);
+            return;
+        }
+        let lines: Vec<_> = source.lines().collect();
+        let line = lines[startloc.line];
+        println!("{}", line);
+        Self::underline_between(startloc.col, endloc.col);
+        self.show_message(file);
+
+        if let Some(s) = &self.suggestion {
+            s.show(source, file);
+        }
     }
 }
 
@@ -159,18 +188,27 @@ impl Error {
 
 impl Suggestion {
     fn string_suggestion(s: &String, loc: &Location) -> Option<Self> {
-        let mut iter = s.chars();
+        let mut iter = s.chars().enumerate();
         loop {
-            if let Some(c) = iter.next() {
+            if let Some((start, c)) = iter.next() {
                 if c == '\\' {
-                    if let Some(e) = iter.next() {
+                    if let Some((end, e)) = iter.next() {
                         break Some(Self {
                             what: format!(
                                 "invalid excape character '\\{}'. \
                                  lust supports '\\t', '\\\\', and '\\n'",
                                 e
                             ),
-                            loc: loc.clone(),
+                            loc: Location {
+                                start: reader::Location {
+                                    line: loc.start.line,
+                                    col: loc.start.col + start,
+                                },
+                                end: reader::Location {
+                                    line: loc.start.line,
+                                    col: loc.start.col + end,
+                                },
+                            },
                         });
                     } else {
                         break None;
@@ -182,15 +220,12 @@ impl Suggestion {
         }
     }
 
-    pub fn on_tok(_token: &Token) -> Option<Self> {
-        // if let TokenType::Unrecognized(s, box TokenType::String(_)) = &token.ttype {
-        //     match &Error::guess_intent(s)[..] {
-        //         "malformed string" => Self::string_suggestion(s, &token.loc),
-        //         &_ => None,
-        //     }
-        // } else {
-        //     None
-        // }
+    pub fn on_tok(token: &Token) -> Option<Self> {
+        if let TokenType::Unrecognized(s, b) = &token.ttype {
+            if let TokenType::String(_) = **b {
+                return Self::string_suggestion(s, &token.loc);
+            }
+        }
         None
     }
 }

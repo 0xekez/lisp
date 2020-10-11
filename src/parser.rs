@@ -23,7 +23,7 @@ pub struct Parser<'a> {
     /// this arround for emitting errors.
     source: &'a str,
     /// A token buffer that will be associated with SOURCE.
-    tokens: TokenBuffer<'a>,
+    tokbuffer: TokenBuffer<'a>,
 }
 
 /// An expression's value.
@@ -48,6 +48,22 @@ pub struct Expr {
 pub struct Program {
     program: Vec<Expr>,
     errors: Vec<Error>,
+}
+
+impl Program {
+    pub fn new() -> Self {
+        Self {
+            program: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    pub fn merge_result(&mut self, mut res: ParseResult) {
+        self.errors.append(&mut res.errors);
+        if let Some(e) = res.expr {
+            self.program.push(e);
+        }
+    }
 }
 
 impl Expr {
@@ -93,16 +109,24 @@ impl<'a> Parser<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
             source: source,
-            tokens: TokenBuffer::new(source),
+            tokbuffer: TokenBuffer::new(source),
         }
     }
 
-    // Collect list of errors and list of expressions.
+    pub fn parse(&mut self) -> Program {
+        let mut p = Program::new();
+        while self.tokbuffer.has_next() {
+            p.merge_result(self.parse_expr());
+        }
+        p
+    }
+
+    /// Parses a list from the tokenbuffer.
     fn parse_list(&mut self, oparen: Token) -> ParseResult {
         let mut res = ParseResult::new();
         let mut v = Vec::new();
         loop {
-            match self.tokens.peek_token() {
+            match self.tokbuffer.peek_token() {
                 Some((tok, buffer)) => match tok.ttype {
                     TokenType::Cparen => {
                         buffer.advance();
@@ -131,8 +155,9 @@ impl<'a> Parser<'a> {
         res
     }
 
+    /// Parses an expression from the tokenbuffer.
     pub fn parse_expr(&mut self) -> ParseResult {
-        match self.tokens.peek_token() {
+        match self.tokbuffer.peek_token() {
             Some((t, buffer)) => match t.ttype {
                 TokenType::Oparen => {
                     let tok = buffer.advance();
@@ -155,7 +180,7 @@ impl<'a> Parser<'a> {
                     loc: buffer.advance().loc,
                 }),
                 TokenType::Unrecognized(s, _) => ParseResult::from_err(Error::on_tok(
-                    &format!("unrecognized token: {}", s),
+                    &format!("malformed token: {}", s),
                     &buffer.advance(),
                 )),
             },
@@ -163,7 +188,7 @@ impl<'a> Parser<'a> {
                 let mut res = ParseResult::new();
                 res.merge_err(Error::at_loc(
                     "unexpected end of input parsing expression",
-                    &self.tokens.loc(),
+                    &self.tokbuffer.loc(),
                 ));
                 res
             }

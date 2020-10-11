@@ -1,166 +1,69 @@
-# Lust
+# Lust Spec
 
-Lust is a very small Lisp-ish programming language written in Rust. If
-you have used a programming language in the Lisp family before, much of
-Lust should already be familiar to you.
+## Syntax
 
+- string literal:
+  ```scheme
+  "hello"
+  ```
+- 32 bit float literal
+ ```scheme
+ 1.5
+ ```
+- define a variable:
+  ```scheme
+  (define foo 0)
+  ```
+- define a function:
+  ```scheme
+  (define I (lambda (x) x))
+  ```
+- call a function:
+  ```scheme
+  (I 0)
+  ```
 
-## Getting started
+## Builtins
 
-Out of the box, Lust is really quite small. It has the notion of a
-conditional, less than and greater than, variable bindings, and
-functions. The following definition of a Fibonacci program actually
-encompasses the entire language minus list processing:
+- print something to the screen:
+  ```scheme
+  (display 0)
+  ```
 
-```lisp
-(def fib (fn (n) (if (< n 2) n (+ (fib (+ n -1)) (fib (+ n -2))))))
-```
+## JIT
 
-The goal of lust is to define a language with as little machinery as
-possible. As much as possible, Lust should be written in Lust. In
-order to have the notion of equality, we must implement it.
+JIT using
+[Cranelift](https://github.com/bytecodealliance/simplejit-demo) as our
+backend. Why use Cranelift:
 
-```lisp
-(def = (fn (a b)
-     (if (err? (+ a 1))
-     	 (if (err? (+ b 1)) (list= a b) 0)
-	 (if (err? (+ b 1)) 0 (float= a b)))))
+	1. It's much easier to use in a Rust program and I didn't want to
+	install things.
 
-```
+The original plan was to compile to the JVM but I couldn't find any
+decent bindings to assemble JVM code from Rust.
 
-First, we test to see if we can add one to the input. If we can we
-call `float=` which compares floats, if we can not, we call `list=`
-which compares lists. We can define those two functions as follows:
+Idea is to compile into a function called `lust_start_` that is the
+"entrypoint" for lust programs. JIT returns a handle to that function
+when its done with compilation. No idea how I'll do macros yet, but my
+bet is that using a JIT means that it'll be possible to dynamically
+compile them. Otherwise it seems easy enough to call into the
+interpreter from the JIT.
 
-```lisp
-(def float= (fn (a b)
-     (if (< a b) 0
-     	 (if (> a b) 0 1))))
+String literals can be managed by writing them to the data section of
+the generated code. See
+[this](https://github.com/bytecodealliance/simplejit-demo/blob/736e1501da5caad25f4b4dfceabdec95f2972316/src/toy.rs#L121)
+for an exmaple.
 
-(def list= (fn (a b)
-     (if (nil? a)
-     	 (if (nil? b) 1 0)
-	 (if (nil? b) 0
-	     (if (= (first a) (first b))
-	     	 (= (rest a) (rest b))
-	     	 0)))))
-```
+I still have no idea how I want to do memory management in Lust so the
+idea of non-literal strings is pretty far down the line now.
 
-At this point, you've seen the vast majority of Lust's builtin
-functions. Now we'll define some more math operations.
+Lambda's are going to be interesting to compile. To start we can
+probably cheat and avoid higher order functions entiely by requiring
+that lambdas only ever appear as the second argument to a define
+call. Later on though we'll likely have to do some sort of lambda
+lifting or otherwise. It's also possible that the jit will be totally
+cool with defining functions in functions though which I'm down for.
 
-For subtraction, we need a way to compute the additive inverse. At the
-moment, I have yet to work out a good way to do this for non-whole
-numbers. For whole numbers though, we can define the additive inverse
-as follows:
-
-```lisp
-(def add-inv-pos (fn (n guess)
-     (if (= (+ n guess) 0) guess
-     	(add-inv-pos n (+ guess -1)))))
-
-(def add-inv-neg (fn (n guess)
-     (if (= (+ n guess) 0) guess
-     	 (add-inv-neg n (+ guess 1)))))
-
-(def add-inv (fn (n)
-     (if (< n 0)
-     	 (add-inv-neg n n)
-     	 ( if ( > n 0 )
-	   (add-inv-pos n n)
-	   0))))
-```
-
-Once we have that, we can define subtraction and multiplication
-without too much trouble:
-
-```lisp
-(def - (fn (a b)
-     (+ a (add_inv b b))))
-
-(def * (fn (a n)
-     (if (= n 0) 0
-     	 (+ a (* a (- n 1))))))
-```
-
-Lust can also read source files. For your convience, all of these
-functions can be loaded into a REPL by running:
-
-```
-cargo run std.ls
-```
-
-## Lust Docs
-
-The core goal is Lust is to be as simple as possible. There is no
-notion of equality, subtraction, multiplication, or division baked
-into the language. As a result, the entire description of the language
-can fit into this rather small text file.
-
-### (def [symbol] [expression])
-
-Associates symbol with the result of evaluating expression in the
-current environment. For example:
-
-```lisp
-(def dog 1)
-(def I (fn (w) w))
-```
-
-### (fn [arg list] [body expression])
-
-Evaluates to a lambda expression which takes arg list as arguments and
-then evaluates the body expression in a new environment with those
-arguments associated with whatever was passed into the lambda. The
-returned lambda captures its closure.
-
-### (if [cond expression] [true expression] [false expression])
-
-Evaluates to an if expression which first evaluates its cond
-expression and the evaluates its true or false expression conditional
-on the result of the cond expression. In lust 0 is false and all other
-numbers are true. Non-numeric values are not valid conditional
-expressions.
-
-### (err? [expression])
-
-Evaluates expression and returns 1 if it resulted in an error, 0
-otherwise. The error will not be printed to stderr.
-
-### (print [expression])
-
-Evaluates expression and then prints the result to std::oi. Returns 1.
-
-### (list [a_1] .. [a_n])
-
-Returns a list from its arguments. The arguments are evaluated.
-
-### (nil? [list])
-
-Returns 1 if the list is the empty list, 0 otherwise.
-
-### (first [list])
-
-Returns the first item in a list. Fails on an empty list.
-
-### (rest [list])
-
-Returns a list containing all but the first element of list. Fails on
-an empty list.
-
-### (eval [expression])
-
-Exposes the evaluator to lust. First resolves / evaluates all its
-argument, then evaluates whatever is returned.
-
-### (> [a_1] .. [a_n)
-
-Returns 1 if a_1 > a_2 > ..., 0 otherwise.
-
-### (< [a_1] .. [a_n)
-
-Returns 1 if a_1 < a_2 < ..., 0 otherwise.
-
-### (+ [a_1] .. [a_n)
-
-Returns a_1 + a_2 + a_3 ... + a_n.
+This will be so interesting! What a wild learning experience it will
+be to work all this out. These are problems I genuenly don't know how
+to solve.
