@@ -196,7 +196,7 @@ impl Suggestion {
                         break Some(Self {
                             what: format!(
                                 "invalid excape character '\\{}'. \
-                                 lust supports '\\t', '\\\\', and '\\n'",
+                                 '\\t', '\\\\', and '\\n' are supported",
                                 e
                             ),
                             loc: Location {
