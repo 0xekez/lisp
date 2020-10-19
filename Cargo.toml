@@ -8,6 +8,6 @@ edition = "2018"
 
 [dependencies]
 colored = "2"
-cranelift = "0.66.0"
-cranelift-module = "0.66.0"
-cranelift-simplejit = "0.66.0"
+cranelift = "0.67.0"
+cranelift-module = "0.67.0"
+cranelift-simplejit = "0.67.0"
