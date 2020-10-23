@@ -1,10 +1,10 @@
 use std::io;
 
-use lust::parser::ExprVal;
-use lust::parser::Parser;
 use lust::{
     errors::{Error, Printable},
-    jit::JIT,
+    interpreter::Interpreter,
+    parser::ExprVal,
+    parser::Parser,
 };
 
 fn get_line() -> String {
@@ -18,20 +18,18 @@ fn get_line() -> String {
 }
 
 fn main() {
-    let mut jit = JIT::new();
+    let evaluator = Interpreter::new();
     loop {
-        let source = get_line();
-        let mut parser = Parser::new(&source);
+        let line = get_line();
+        let mut parser = Parser::new(&line);
         let res = parser.parse_expr();
 
         for e in &res.errors {
-            e.show(&source, "repl");
+            e.show(&line, "repl");
         }
         if res.errors.is_empty() {
             let expr = res.expr.unwrap();
-            let code = jit.jit_expr(&expr).unwrap();
-            let func = unsafe { std::mem::transmute::<_, fn() -> f32>(code) };
-            println!("  => {}", func());
+            evaluator.eval(expr);
         }
     }
 }

@@ -15,6 +15,8 @@ pub enum TokenType {
     Oparen,
     /// Closing parenthesis.
     Cparen,
+    /// A quote '
+    Quote,
     /// An identifier. This is any sequence of characters not matched
     /// by the above rules.
     Id(String),
@@ -68,6 +70,7 @@ impl<'a> Tokenizer<'a> {
                 '0'..='9' => self.tokenize_number(),
                 '(' => self.eat_token_at_point(TokenType::Oparen),
                 ')' => self.eat_token_at_point(TokenType::Cparen),
+                '\'' => self.eat_token_at_point(TokenType::Quote),
                 '"' => self.tokenize_string(),
                 _ => self.tokenize_id(),
             }),

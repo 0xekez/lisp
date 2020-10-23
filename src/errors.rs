@@ -136,8 +136,12 @@ impl Printable for Error {
             return;
         }
         let lines: Vec<_> = source.lines().collect();
-        let line = lines[startloc.line];
-        println!("{}", line);
+        // Possible to have an empty line or a line that is only a
+        // newline.
+        if !lines.is_empty() && startloc.line < lines.len() {
+            let line = lines[startloc.line];
+            println!("{}", line);
+        }
         Self::underline_between(startloc.col, endloc.col);
         self.show_message(file);
 

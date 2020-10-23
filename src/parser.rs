@@ -179,6 +179,28 @@ impl<'a> Parser<'a> {
                     val: ExprVal::String(s),
                     loc: buffer.advance().loc,
                 }),
+                TokenType::Quote => {
+                    let quote = ExprVal::Id("quote".to_string());
+                    let startloc = buffer.advance().loc;
+                    let mut bodyres = self.parse_expr();
+                    let call = match bodyres.expr {
+                        Some(e) => ExprVal::List(vec![
+                            Expr {
+                                val: quote,
+                                loc: startloc.clone(),
+                            },
+                            e,
+                        ]),
+                        None => quote,
+                    };
+                    let expr = Expr {
+                        val: call,
+                        loc: Location::union(&startloc, &self.tokbuffer.loc()),
+                    };
+                    let mut parseres = ParseResult::from_expr(expr);
+                    parseres.errors.append(&mut bodyres.errors);
+                    parseres
+                }
                 TokenType::Unrecognized(s, _) => ParseResult::from_err(Error::on_tok(
                     &format!("malformed token: {}", s),
                     &buffer.advance(),
