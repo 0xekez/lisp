@@ -253,7 +253,7 @@ impl<'a> Compiler<'a> {
     //   => 4
     //
     // Might actualy work!
-    fn compile_fn(&mut self, list: &[Expr]) -> Result<Value, String> {
+    fn compile_fn(&mut self, _list: &[Expr]) -> Result<Value, String> {
         Err("fn".to_string())
     }
 }
@@ -275,7 +275,7 @@ pub struct OLDJIT {
     ctx: codegen::Context,
 
     /// The data context, which is to data objects what `ctx` is to functions.
-    data_ctx: DataContext,
+    _data_ctx: DataContext,
 
     /// The module, with the simplejit backend, which manages the JIT'd
     /// functions.
@@ -300,7 +300,7 @@ impl OLDJIT {
         let mut jit = Self {
             builder_context: FunctionBuilderContext::new(),
             ctx: module.make_context(),
-            data_ctx: DataContext::new(),
+            _data_ctx: DataContext::new(),
             module,
             functions: HashMap::new(),
             anon_count: 0,

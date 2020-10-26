@@ -3,7 +3,6 @@ use std::io;
 use lust::{
     errors::{Error, Printable},
     interpreter::Interpreter,
-    parser::ExprVal,
     parser::Parser,
 };
 
@@ -18,7 +17,7 @@ fn get_line() -> String {
 }
 
 fn main() {
-    let evaluator = Interpreter::new();
+    let mut evaluator = Interpreter::new();
     loop {
         let line = get_line();
         let mut parser = Parser::new(&line);
@@ -29,7 +28,10 @@ fn main() {
         }
         if res.errors.is_empty() {
             let expr = res.expr.unwrap();
-            evaluator.eval(expr);
+            if let Err(s) = evaluator.eval(&expr) {
+                let error = Error::on_expr(&s, &expr);
+                error.show(&line, "repl");
+            }
         }
     }
 }

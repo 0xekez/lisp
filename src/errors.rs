@@ -1,4 +1,5 @@
 use crate::location::Location;
+use crate::parser::Expr;
 use crate::reader;
 use crate::tokenizer::{Token, TokenType};
 use colored::*;
@@ -174,6 +175,13 @@ impl Error {
     pub fn at_loc(what: &str, loc: &Location) -> Self {
         Self {
             loc: loc.clone(),
+            what: what.to_string(),
+            suggestion: None,
+        }
+    }
+    pub fn on_expr(what: &str, expr: &Expr) -> Self {
+        Self {
+            loc: expr.loc.clone(),
             what: what.to_string(),
             suggestion: None,
         }
