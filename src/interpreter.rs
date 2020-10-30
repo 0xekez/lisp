@@ -16,6 +16,13 @@ impl<'a> Interpreter<'a> {
     pub fn eval(&mut self, expr: &Expr) -> Result<(), String> {
         let data = expr.to_data()?;
 
+        Self::eval_in_env(&data, &mut self.global_env)?;
+        Ok(())
+    }
+
+    pub fn eval_print(&mut self, expr: &Expr) -> Result<(), String> {
+        let data = expr.to_data()?;
+
         println!("=> {}", Self::eval_in_env(&data, &mut self.global_env)?);
         Ok(())
     }
@@ -25,9 +32,7 @@ impl<'a> Interpreter<'a> {
             LustData::Symbol(ref s) => env.resolve(s),
             LustData::List(ref v) => Self::eval_list(v, env),
             LustData::Builtin(_) => Err("unexpected builtin".to_string()),
-            LustData::Number(_) => Ok(expr.clone()),
-            LustData::Fn(_) => Ok(expr.clone()),
-            LustData::Mac(_) => Ok(expr.clone()),
+            _ => Ok(expr.clone()),
         }
     }
 
@@ -49,6 +54,39 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    fn is_tail_call(body: &Vec<LustData>, env: &LustEnv) -> Result<bool, String> {
+        let last = body.last().unwrap();
+        Ok(if let LustData::List(ref v) = last {
+            match &v[..] {
+                [a, ..] => {
+                    if let LustData::Symbol(ref s) = a {
+                        let val = env.resolve(s)?;
+                        if let LustData::Fn(ref f) = val {
+                            &f.body == body
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
+        } else {
+            false
+        })
+    }
+
+    fn eval_fnbody(body: &Vec<LustData>, mut env: &mut LustEnv) -> Result<LustData, String> {
+        for d in &body[0..(body.len() - 1)] {
+            Self::eval_in_env(d, &mut env)?;
+        }
+        if Self::is_tail_call(body, env)? {
+            println!("tail call");
+        }
+        Self::eval_in_env(body.last().unwrap(), &mut env)
+    }
+
     fn eval_funcall(
         func: &LustFn,
         args: &[LustData],
@@ -67,14 +105,8 @@ impl<'a> Interpreter<'a> {
                     .data
                     .insert(param.clone(), Self::eval_in_env(arg, env)?);
             }
-            // Now that we are done mutating the enviroment, make it
-            // the outer enviroment for the function.
-            fnenv.outer = Some(env);
-            let mut res = Vec::new();
-            for d in &func.body {
-                res.push(Self::eval_in_env(d, &mut fnenv)?);
-            }
-            Ok(res.last().unwrap().clone())
+            fnenv.outer = Some(&env);
+            Self::eval_fnbody(&func.body, &mut fnenv)
         }
     }
 
@@ -97,11 +129,7 @@ impl<'a> Interpreter<'a> {
             // Now that we are done mutating the enviroment, make it
             // the outer enviroment for the function.
             fnenv.outer = Some(env);
-            let mut res = Vec::new();
-            for d in &func.body {
-                res.push(Self::eval_in_env(d, &mut fnenv)?);
-            }
-            Ok(res.last().unwrap().clone())
+            Self::eval_fnbody(&func.body, &mut fnenv)
         }
     }
 }
@@ -134,7 +162,7 @@ enum LustData {
     Mac(LustFn),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct LustFn {
     params: Vec<String>,
     body: Vec<LustData>,
@@ -224,12 +252,12 @@ impl<'a> LustEnv<'a> {
         );
 
         me.data.insert(
-            "mac".to_string(),
+            "macro".to_string(),
             LustData::Builtin(
                 |args: &[LustData], _env: &mut LustEnv| -> Result<LustData, String> {
                     if args.len() < 2 {
                         Err(
-                            "mac expects at least two paramaters, a param list and a body"
+                            "macro expects at least two paramaters, a param list and a body"
                                 .to_string(),
                         )
                     } else {
@@ -254,11 +282,110 @@ impl<'a> LustEnv<'a> {
                             LustData::List(ref v) => !v.is_empty(),
                             _ => true,
                         };
+                        // TODO: if should create a new enviroment
+                        // with its new children.
                         if cond {
                             Interpreter::eval_in_env(&args[1], env)
                         } else {
                             Interpreter::eval_in_env(&args[2], env)
                         }
+                    }
+                },
+            ),
+        );
+
+        me.data.insert(
+            "println".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: &mut LustEnv| -> Result<LustData, String> {
+                    if args.len() != 1 {
+                        Err("println expects one paramater".to_string())
+                    } else {
+                        let target = Interpreter::eval_in_env(&args[0], env)?;
+                        print!("{}\n", target);
+                        Ok(LustData::List(vec![]))
+                    }
+                },
+            ),
+        );
+
+        me.data.insert(
+            "negate".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: &mut LustEnv| -> Result<LustData, String> {
+                    if args.len() != 1 {
+                        Err("negate expects one paramater".to_string())
+                    } else {
+                        let target = Interpreter::eval_in_env(&args[0], env)?;
+                        match target {
+                            LustData::Number(n) => Ok(LustData::Number(-n)),
+                            _ => Err("non numeric argument to negate".to_string()),
+                        }
+                    }
+                },
+            ),
+        );
+
+        me.data.insert(
+            "add".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: &mut LustEnv| -> Result<LustData, String> {
+                    if args.len() < 1 {
+                        Err("add expects two paramaters".to_string())
+                    } else {
+                        let lhs = match Interpreter::eval_in_env(&args[0], env)? {
+                            LustData::Number(n) => n,
+                            _ => return Err("non numeric argument to add".to_string()),
+                        };
+                        let rhs = match Interpreter::eval_in_env(&args[1], env)? {
+                            LustData::Number(n) => n,
+                            _ => return Err("non numeric argument to add".to_string()),
+                        };
+                        Ok(LustData::Number(lhs + rhs))
+                    }
+                },
+            ),
+        );
+
+        me.data.insert(
+            "lt".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: &mut LustEnv| -> Result<LustData, String> {
+                    if args.len() < 1 {
+                        Err("add expects two paramaters".to_string())
+                    } else {
+                        let lhs = match Interpreter::eval_in_env(&args[0], env)? {
+                            LustData::Number(n) => n,
+                            _ => return Err("non numeric argument to add".to_string()),
+                        };
+                        let rhs = match Interpreter::eval_in_env(&args[1], env)? {
+                            LustData::Number(n) => n,
+                            _ => return Err("non numeric argument to add".to_string()),
+                        };
+                        Ok(if lhs < rhs {
+                            LustData::Symbol("#t".to_string())
+                        } else {
+                            LustData::List(vec![])
+                        })
+                    }
+                },
+            ),
+        );
+
+        me.data.insert(
+            "eq".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: &mut LustEnv| -> Result<LustData, String> {
+                    if args.len() != 2 {
+                        Err("eq expects two arguments".to_string())
+                    } else {
+                        let lhs = Interpreter::eval_in_env(&args[0], env)?;
+                        let rhs = Interpreter::eval_in_env(&args[1], env)?;
+                        Ok(if lhs == rhs {
+                            LustData::Symbol("#t".to_string())
+                        } else {
+                            LustData::List(vec![])
+                        })
                     }
                 },
             ),
@@ -293,6 +420,21 @@ impl<'a> LustEnv<'a> {
                 Some(ref outer) => outer.resolve(id),
                 None => Err(format!("failed to resolve identifier {}", id)),
             },
+        }
+    }
+}
+
+impl PartialEq for LustData {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self, other) {
+            (LustData::Number(l), LustData::Number(r)) => l == r,
+            (LustData::Symbol(ref l), LustData::Symbol(ref r)) => l == r,
+            (LustData::List(ref l), LustData::List(ref r)) => {
+                l.iter().zip(r.iter()).all(|(lhs, rhs)| lhs == rhs)
+            }
+            (LustData::Fn(l), LustData::Fn(r)) => l == r,
+            (LustData::Mac(l), LustData::Mac(r)) => l == r,
+            (_, _) => false,
         }
     }
 }

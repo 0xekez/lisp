@@ -155,6 +155,10 @@ impl<'a> Parser<'a> {
         res
     }
 
+    pub fn has_more(&self) -> bool {
+        self.tokbuffer.has_next()
+    }
+
     /// Parses an expression from the tokenbuffer.
     pub fn parse_expr(&mut self) -> ParseResult {
         match self.tokbuffer.peek_token() {
