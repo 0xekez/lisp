@@ -4,22 +4,34 @@ use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
+/// An interpreter for Lust code.
 pub struct Interpreter {
+    /// The global enviroment in which functions are evlauted.
     global_env: Rc<RefCell<LustEnv>>,
 }
 
+/// The result of calling a function. If the function is a builtin the
+/// result will be a return value, if it is a user defined function
+/// then the result will be a new enviroment and expression to
+/// evaluate in that enviroment.
 enum CallResult {
+    /// A returned value.
     Ret(LustData),
+    /// A new enviroment and data to evalute in it.
     Call(Rc<RefCell<LustEnv>>, LustData),
 }
 
 impl Interpreter {
+    /// Builds a new interpreter with all of Lust's builtin functions
+    /// installed.
     pub fn new() -> Self {
         Self {
             global_env: LustEnv::new(),
         }
     }
 
+    /// Evlalutes an expression from the parser. The expression is
+    /// first stripped of location data and then evaluated.
     pub fn eval(&mut self, expr: &Expr) -> Result<(), String> {
         let data = expr.to_data()?;
 
@@ -27,6 +39,8 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Evaluates an expression and then prints the result. Used by the
+    /// repl.
     pub fn eval_print(&mut self, expr: &Expr) -> Result<(), String> {
         let data = expr.to_data()?;
 
@@ -34,9 +48,19 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Evaluates an expression in the given enviroment.
     fn eval_in_env(expr: &LustData, env: Rc<RefCell<LustEnv>>) -> Result<LustData, String> {
-        let mut currentenv = env;
-        let mut currexpr = expr.clone();
+        // The current enviroment we're evaluating in.
+        let currentenv = env;
+        let currexpr = Self::macroexpand(expr.clone(), currentenv.clone())?;
+        Self::eval_without_expansion(currexpr, currentenv)
+    }
+
+    /// Evaluates an expression witout performing macro expansion.
+    fn eval_without_expansion(
+        mut currexpr: LustData,
+        mut currentenv: Rc<RefCell<LustEnv>>,
+    ) -> Result<LustData, String> {
         loop {
             match currexpr {
                 LustData::Symbol(ref s) => break currentenv.borrow().resolve(s),
@@ -48,28 +72,71 @@ impl Interpreter {
                     let fnres = Self::eval_list(v, currentenv)?;
                     match fnres {
                         CallResult::Ret(v) => break Ok(v),
+                        // If this is a call of a user-defined
+                        // expression we perform a tail call by
+                        // replacing the enviroment and expression
+                        // that we're evlauting with the returned
+                        // ones.
                         CallResult::Call(env, expr) => {
                             currentenv = env;
                             currexpr = expr;
                         }
                     }
                 }
-                LustData::Builtin(_) => break Err("unexpected builtin".to_string()),
                 _ => break Ok(currexpr),
             }
         }
     }
 
+    /// Determines if an expression is a call to a macro.
+    fn is_macro_call(ast: &LustData, env: Rc<RefCell<LustEnv>>) -> bool {
+        if let LustData::List(ast) = ast {
+            if ast.len() == 0 {
+                return false;
+            }
+            let pred = &ast[0];
+            match pred {
+                LustData::Symbol(ref s) => match env.borrow().resolve(s) {
+                    Ok(data) => {
+                        if let LustData::Mac(_) = data {
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Err(_) => false,
+                },
+                LustData::Mac(_) => true,
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Expands an expression if it is a macro.
+    fn macroexpand(mut ast: LustData, env: Rc<RefCell<LustEnv>>) -> Result<LustData, String> {
+        loop {
+            if !Self::is_macro_call(&ast, env.clone()) {
+                break Ok(ast.clone());
+            }
+            ast = Self::eval_without_expansion(ast, env.clone())?;
+        }
+    }
+
+    /// Evaluates a list.
     fn eval_list(list: &Vec<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
         let pred = Self::eval_in_env(list.first().unwrap(), env.clone())?;
         match pred {
             LustData::Builtin(ref f) => f(&list[1..], env),
             LustData::Fn(ref lf) => Self::eval_funcall(lf, &list[1..], env),
-            LustData::Mac(ref lm) => Self::eval_macinv(lm, &list[1..], env),
+            LustData::Mac(ref lm) => Self::eval_funcall(lm, &list[1..], env),
             _ => Err(format!("invalid list predicate: {}", pred)),
         }
     }
 
+    /// Evaluates a function call. This pretty much just ammounts to
+    /// installing its arguments in the enviroment.
     fn eval_funcall(
         func: &LustFn,
         args: &[LustData],
@@ -89,29 +156,6 @@ impl Interpreter {
                     .data
                     .insert(param.clone(), Self::eval_in_env(arg, env.clone())?);
             }
-            fnenv.borrow_mut().outer = Some(env);
-            Ok(CallResult::Call(fnenv, func.body.clone()))
-        }
-    }
-
-    fn eval_macinv(
-        func: &LustFn,
-        args: &[LustData],
-        env: Rc<RefCell<LustEnv>>,
-    ) -> Result<CallResult, String> {
-        if args.len() != func.params.len() {
-            Err(format!(
-                "wrong number of arguments for macro involcation. got {} and expected {}",
-                args.len(),
-                func.params.len()
-            ))
-        } else {
-            let fnenv = LustEnv::new();
-            for (arg, param) in args.iter().zip(&func.params) {
-                fnenv.borrow_mut().data.insert(param.clone(), arg.clone());
-            }
-            // Now that we are done mutating the enviroment, make it
-            // the outer enviroment for the function.
             fnenv.borrow_mut().outer = Some(env);
             Ok(CallResult::Call(fnenv, func.body.clone()))
         }
@@ -168,6 +212,9 @@ impl LustEnv {
             outer: None,
         };
 
+        // Quotes the next expression. The result of evaluating a
+        // quoted expression is the expression. For example, (eval
+        // (quote foo)) yields the value of foo in the current scope.
         me.data.insert(
             "quote".to_string(),
             LustData::Builtin(
@@ -181,6 +228,109 @@ impl LustEnv {
             ),
         );
 
+        // Creates a new list that is the result of evaluating all of
+        // its arguments. For example (list 1 2 3) => (1 2 3)
+        me.data.insert(
+            "list".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
+                    let mut res = Vec::new();
+                    for arg in args {
+                        res.push(Interpreter::eval_in_env(arg, env.clone())?);
+                    }
+                    Ok(CallResult::Ret(LustData::List(res)))
+                },
+            ),
+        );
+
+        // Returns the first item in a list if it exists otherwise
+        // returns ().
+        me.data.insert(
+            "first".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
+                    if args.len() != 1 {
+                        return Err("first expects one argument".to_string());
+                    }
+                    match Interpreter::eval_in_env(&args[0], env.clone())? {
+                        LustData::List(ref v) => {
+                            let val = match v.first() {
+                                Some(d) => d.clone(),
+                                None => LustData::List(vec![]),
+                            };
+                            Ok(CallResult::Ret(val))
+                        }
+                        _ => Err("first called on non list type".to_string()),
+                    }
+                },
+            ),
+        );
+
+        // Returns all but the first element in a list an () if there
+        // are no more elements.
+        me.data.insert(
+            "rest".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
+                    if args.len() != 1 {
+                        return Err("rest expects one argument".to_string());
+                    }
+                    match Interpreter::eval_in_env(&args[0], env.clone())? {
+                        LustData::List(ref v) => {
+                            let val = LustData::List(match v.split_first() {
+                                Some((_, rest)) => rest.to_vec(),
+                                None => vec![],
+                            });
+                            Ok(CallResult::Ret(val))
+                        }
+                        _ => Err("first called on non list type".to_string()),
+                    }
+                },
+            ),
+        );
+
+        // Evaluates each expression in its arguments in sequence.
+        me.data.insert(
+            "do".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
+                    let mut res = LustData::List(vec![]);
+                    for arg in args {
+                        res = Interpreter::eval_in_env(arg, env.clone())?;
+                    }
+                    Ok(CallResult::Ret(res))
+                },
+            ),
+        );
+
+        // Evaluates its first argument. If that evaluates to the
+        // empty list evlautes its third argument and returns the
+        // result, otherwise evaluates its second argument and returns
+        // the result.
+        me.data.insert(
+            "if".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
+                    if args.len() != 3 {
+                        Err("if expects three paramaters condition, then, and else".to_string())
+                    } else {
+                        let cond = Interpreter::eval_in_env(&args[0], env.clone())?;
+                        // The empty list is the only false value.
+                        let cond = match cond {
+                            LustData::List(ref v) => !v.is_empty(),
+                            _ => true,
+                        };
+                        if cond {
+                            Ok(CallResult::Call(env, args[1].clone()))
+                        } else {
+                            Ok(CallResult::Call(env, args[2].clone()))
+                        }
+                    }
+                },
+            ),
+        );
+
+        // Evaluates its argument. This can be used to unwrap quoted forms.
         me.data.insert(
             "eval".to_string(),
             LustData::Builtin(
@@ -194,12 +344,37 @@ impl LustEnv {
             ),
         );
 
+        // Set's a variable in the global scope.
         me.data.insert(
             "set".to_string(),
             LustData::Builtin(
                 |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
                     if args.len() != 2 {
-                        Err(format!("def expects 2 args, got {}", args.len()))
+                        Err(format!("set expects 2 args, got {}", args.len()))
+                    } else {
+                        let target = Interpreter::eval_in_env(&args[0], env.clone())?;
+                        match target {
+                            LustData::Symbol(ref s) => {
+                                let val = Interpreter::eval_in_env(&args[1], env.clone())?;
+                                env.borrow_mut().set_global(s.clone(), &val);
+                                Ok(CallResult::Ret(val))
+                            }
+                            _ => Err("target of set expression must be a symbol".to_string()),
+                        }
+                    }
+                },
+            ),
+        );
+
+        // Binds its the result of evaluating its first argument to
+        // the result of evaluating its second argument in the current
+        // scope. New scopes are created when functons are called.
+        me.data.insert(
+            "let".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
+                    if args.len() != 2 {
+                        Err(format!("let expects 2 args, got {}", args.len()))
                     } else {
                         let target = Interpreter::eval_in_env(&args[0], env.clone())?;
                         match target {
@@ -208,13 +383,18 @@ impl LustEnv {
                                 env.borrow_mut().data.insert(s.clone(), val.clone());
                                 Ok(CallResult::Ret(val))
                             }
-                            _ => Err("target of def expression must be a symbol".to_string()),
+                            _ => Err("target of set expression must be a symbol".to_string()),
                         }
                     }
                 },
             ),
         );
 
+        // Creates a new function where the first argument is a list
+        // of paramaters and the second its body. When a function is
+        // called it creates a new enviroment with its arguments
+        // installed with a parent enviroment of the calling
+        // enviroment.
         me.data.insert(
             "fn".to_string(),
             LustData::Builtin(
@@ -233,6 +413,8 @@ impl LustEnv {
             ),
         );
 
+        // Creates a macro function. Macro functions run before
+        // evaluation and can be used to add special syntatic forms.
         me.data.insert(
             "macro".to_string(),
             LustData::Builtin(
@@ -251,31 +433,29 @@ impl LustEnv {
             ),
         );
 
+        // Expands its argument. If the argument is not a macro
+        // invocation returns its argument, if it is a macro
+        // invocation, invokes the macro and displays the result
+        // without evaluating it like it regularally would be. This
+        // can be very handy for debugging macros.
         me.data.insert(
-            "if".to_string(),
+            "macroexpand".to_string(),
             LustData::Builtin(
                 |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
-                    if args.len() != 3 {
-                        Err("if expects three paramaters condition, then, and else".to_string())
+                    if args.len() != 1 {
+                        Err("macroexpand only expects one argument".to_string())
                     } else {
-                        let cond = Interpreter::eval_in_env(&args[0], env.clone())?;
-                        // The empty list is the only false value.
-                        let cond = match cond {
-                            LustData::List(ref v) => !v.is_empty(),
-                            _ => true,
-                        };
-                        // TODO: if should create a new enviroment
-                        // with its new children.
-                        if cond {
-                            Ok(CallResult::Call(env, args[1].clone()))
-                        } else {
-                            Ok(CallResult::Call(env, args[2].clone()))
-                        }
+                        Ok(CallResult::Ret(Interpreter::macroexpand(
+                            args[0].clone(),
+                            env,
+                        )?))
                     }
                 },
             ),
         );
 
+        // Prints its first argument to the console followed by a
+        // newline.
         me.data.insert(
             "println".to_string(),
             LustData::Builtin(
@@ -291,6 +471,8 @@ impl LustEnv {
             ),
         );
 
+        // Negates its first argument. This will make a numeric
+        // argument negative and error if its argument is non-numeric.
         me.data.insert(
             "negate".to_string(),
             LustData::Builtin(
@@ -308,6 +490,8 @@ impl LustEnv {
             ),
         );
 
+        // Adds its first argument to its second argument and returns
+        // the result.
         me.data.insert(
             "add".to_string(),
             LustData::Builtin(
@@ -329,6 +513,8 @@ impl LustEnv {
             ),
         );
 
+        // Subtracts its first argument from its second argument and
+        // returns the result.
         me.data.insert(
             "sub".to_string(),
             LustData::Builtin(
@@ -350,6 +536,9 @@ impl LustEnv {
             ),
         );
 
+        // Compares its first argument to its second argument. If its
+        // first argument is smaller, returns a truthy value. Returns
+        // a falsy one otherwise.
         me.data.insert(
             "lt".to_string(),
             LustData::Builtin(
@@ -375,6 +564,9 @@ impl LustEnv {
             ),
         );
 
+        // Compares its first argument to its second argument. If they
+        // are the same returns a truthy value, otherwise returns a
+        // falsey one.
         me.data.insert(
             "eq".to_string(),
             LustData::Builtin(
@@ -425,6 +617,13 @@ impl LustEnv {
             },
         }
     }
+
+    pub fn set_global(&mut self, id: String, val: &LustData) -> Option<LustData> {
+        match self.outer {
+            Some(ref outer) => outer.borrow_mut().set_global(id, val),
+            None => self.data.insert(id, val.clone()),
+        }
+    }
 }
 
 impl PartialEq for LustData {
@@ -433,7 +632,7 @@ impl PartialEq for LustData {
             (LustData::Number(l), LustData::Number(r)) => l == r,
             (LustData::Symbol(ref l), LustData::Symbol(ref r)) => l == r,
             (LustData::List(ref l), LustData::List(ref r)) => {
-                l.iter().zip(r.iter()).all(|(lhs, rhs)| lhs == rhs)
+                l.len() == r.len() && l.iter().zip(r.iter()).all(|(lhs, rhs)| lhs == rhs)
             }
             (LustData::Fn(l), LustData::Fn(r)) => l == r,
             (LustData::Mac(l), LustData::Mac(r)) => l == r,
@@ -476,7 +675,7 @@ impl fmt::Display for LustData {
                 write!(f, ")")
             }
             Self::Mac(func) => {
-                write!(f, "(mac ")?;
+                write!(f, "(macro ")?;
                 if func.params.is_empty() {
                     write!(f, "()")?;
                 } else {
