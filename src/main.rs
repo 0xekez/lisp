@@ -76,7 +76,7 @@ fn file(path: &str) -> io::Result<String> {
         }
     }
     repl(&mut evaluator);
-    Ok("done :)".to_string())
+    Ok("lust: done :)".to_string())
 }
 
 fn show_usage() {

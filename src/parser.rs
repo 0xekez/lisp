@@ -27,7 +27,7 @@ pub struct Parser<'a> {
 }
 
 /// An expression's value.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ExprVal {
     Number(f32),
     String(String),
@@ -36,7 +36,7 @@ pub enum ExprVal {
 }
 
 /// An expression. Holds a value and a location.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Expr {
     /// The vallue of the expression.
     pub val: ExprVal,
@@ -167,22 +167,27 @@ impl<'a> Parser<'a> {
                     let tok = buffer.advance();
                     self.parse_list(tok)
                 }
+
                 TokenType::Cparen => ParseResult::from_err(Error::on_tok(
                     "unexpected closing paren",
                     &buffer.advance(),
                 )),
+
                 TokenType::Number(f) => ParseResult::from_expr(Expr {
                     val: ExprVal::Number(f),
                     loc: buffer.advance().loc,
                 }),
+
                 TokenType::Id(s) => ParseResult::from_expr(Expr {
                     val: ExprVal::Id(s),
                     loc: buffer.advance().loc,
                 }),
+
                 TokenType::String(s) => ParseResult::from_expr(Expr {
                     val: ExprVal::String(s),
                     loc: buffer.advance().loc,
                 }),
+
                 TokenType::Quote => {
                     let quote = ExprVal::Id("quote".to_string());
                     let startloc = buffer.advance().loc;
@@ -205,6 +210,30 @@ impl<'a> Parser<'a> {
                     parseres.errors.append(&mut bodyres.errors);
                     parseres
                 }
+
+                TokenType::Negate => {
+                    let negate = ExprVal::Id("negate".to_string());
+                    let startloc = buffer.advance().loc;
+                    let mut bodyres = self.parse_expr();
+                    let call = match bodyres.expr {
+                        Some(e) => ExprVal::List(vec![
+                            Expr {
+                                val: negate,
+                                loc: startloc.clone(),
+                            },
+                            e,
+                        ]),
+                        None => negate,
+                    };
+                    let expr = Expr {
+                        val: call,
+                        loc: Location::union(&startloc, &self.tokbuffer.loc()),
+                    };
+                    let mut parseres = ParseResult::from_expr(expr);
+                    parseres.errors.append(&mut bodyres.errors);
+                    parseres
+                }
+
                 TokenType::Unrecognized(s, _) => ParseResult::from_err(Error::on_tok(
                     &format!("malformed token: {}", s),
                     &buffer.advance(),

@@ -17,6 +17,8 @@ pub enum TokenType {
     Cparen,
     /// A quote '
     Quote,
+    // A - sign
+    Negate,
     /// An identifier. This is any sequence of characters not matched
     /// by the above rules.
     Id(String),
@@ -71,6 +73,7 @@ impl<'a> Tokenizer<'a> {
                 '(' => self.eat_token_at_point(TokenType::Oparen),
                 ')' => self.eat_token_at_point(TokenType::Cparen),
                 '\'' => self.eat_token_at_point(TokenType::Quote),
+                '-' => self.eat_token_at_point(TokenType::Negate),
                 '"' => self.tokenize_string(),
                 _ => self.tokenize_id(),
             }),

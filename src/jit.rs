@@ -18,6 +18,73 @@ pub enum JITVal {
     Var(Variable),
 }
 
+// A JIT function takes a single argument and produces a single
+// floating point number.
+struct JITFnData {
+    name: String,
+    param: String,
+    stmts: Vec<JITExpr>,
+}
+
+enum JITExpr {
+    Identifier(String),
+    Lt(Box<JITExpr>, Box<JITExpr>),
+    Sub(Box<JITExpr>, Box<JITExpr>),
+    IfElse(Box<JITExpr>, Vec<JITExpr>, Vec<JITExpr>),
+    Call(String, Vec<JITExpr>),
+}
+
+pub fn get_id(expr: &Expr) -> Option<String> {
+    match &expr.val {
+        ExprVal::Id(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+pub fn is_id(what: &str, expr: &Expr) -> bool {
+    match get_id(expr) {
+        Some(s) => s == what,
+        None => false,
+    }
+}
+
+pub fn extract_fndecl(expr: &Expr) -> Option<(String, Vec<Expr>)> {
+    match &expr.val {
+        ExprVal::List(l) => {
+            if l.len() != 3 {
+                return None;
+            }
+            if !is_id("set", &l[0]) {
+                return None;
+            }
+            let name = match get_id(&l[1]) {
+                Some(s) => s,
+                None => return None,
+            };
+            match &l[2].val {
+                ExprVal::List(l) => {
+                    if l.len() != 3 {
+                        return None;
+                    }
+                    if !is_id("fn", &l[0]) {
+                        return None;
+                    }
+                    let body = match l[3].val.clone() {
+                        ExprVal::List(l) => l,
+                        _ => vec![l[3].clone()],
+                    };
+                    return Some((name, body));
+                }
+                _ => return None,
+            }
+        }
+        _ => None,
+    }
+}
+
+// Must be in form (set 'foo (fn (a) (body)))
+pub fn get_jitfn(expr: &Expr) {}
+
 /// The lust JIT compiler.
 pub struct JIT {
     /// Context for building multiple functions in the same module.

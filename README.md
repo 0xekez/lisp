@@ -1,69 +1,46 @@
-# Lust Spec
+ugh. tail recusion isn't going to work without a reasonably large
+amount of refactoring in the interpreter so I'll skip that for now.
 
-## Syntax
 
-- string literal:
-  ```scheme
-  "hello"
-  ```
-- 32 bit float literal
- ```scheme
- 1.5
- ```
-- define a variable:
-  ```scheme
-  (define foo 0)
-  ```
-- define a function:
-  ```scheme
-  (define I (lambda (x) x))
-  ```
-- call a function:
-  ```scheme
-  (I 0)
-  ```
+so JIT. Seems like we need to just accept that we can only JIT a small
+portion of the code that can be executed. Let's say two argument
+functions without any lists involved.
 
-## Builtins
+If that's the case then I think we can just go ahead and write a JIT
+compiler for LustData.
 
-- print something to the screen:
-  ```scheme
-  (display 0)
-  ```
+The process will probably look something like this:
 
-## JIT
+1. Write a JITData struct. Then write a conversion routine from
+   LustData from JItData. Here we can catch issues related to List's
+   being involved. This should essentially take some number of
+   s-expressions and convert them into expressions with equicalents in
+   the SimpleJit demo.
 
-JIT using
-[Cranelift](https://github.com/bytecodealliance/simplejit-demo) as our
-backend. Why use Cranelift:
+3. Some artificial requirements:
+	- The top level JITData must be a function definition.
+	- Functions can only have two floating point arguments.
+	- Functions must return one floating point.
 
-	1. It's much easier to use in a Rust program and I didn't want to
-	install things.
+4. We then have some map between function names and their JIT
+   functions. When the interpreter see's a function invocation with
+   that name and two floating point arguments it can try and call
+   that.
 
-The original plan was to compile to the JVM but I couldn't find any
-decent bindings to assemble JVM code from Rust.
+2. At that point we can probably pretty much copy paste over the other
+   JIT and call it a day.
 
-Idea is to compile into a function called `lust_start_` that is the
-"entrypoint" for lust programs. JIT returns a handle to that function
-when its done with compilation. No idea how I'll do macros yet, but my
-bet is that using a JIT means that it'll be possible to dynamically
-compile them. Otherwise it seems easy enough to call into the
-interpreter from the JIT.
 
-String literals can be managed by writing them to the data section of
-the generated code. See
-[this](https://github.com/bytecodealliance/simplejit-demo/blob/736e1501da5caad25f4b4dfceabdec95f2972316/src/toy.rs#L121)
-for an exmaple.
+# Alternatively
 
-I still have no idea how I want to do memory management in Lust so the
-idea of non-literal strings is pretty far down the line now.
+Evaluating a function just returns a new enviroment and ast.
 
-Lambda's are going to be interesting to compile. To start we can
-probably cheat and avoid higher order functions entiely by requiring
-that lambdas only ever appear as the second argument to a define
-call. Later on though we'll likely have to do some sort of lambda
-lifting or otherwise. It's also possible that the jit will be totally
-cool with defining functions in functions though which I'm down for.
+Specifically:
 
-This will be so interesting! What a wild learning experience it will
-be to work all this out. These are problems I genuenly don't know how
-to solve.
+When you evaluate a function call you get back an enviroment and a
+`Vec<LustData>` where the enviroment becomes the new enviroment to
+eval in and the list of data becomes the new ast to evaluate.
+
+First step is to change enviroments so that they are reference counted
+instead of stored as references so that we can appease the borrow
+checker.
