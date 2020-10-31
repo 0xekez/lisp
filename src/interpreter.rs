@@ -8,10 +8,9 @@ pub struct Interpreter {
     global_env: Rc<RefCell<LustEnv>>,
 }
 
-struct FnResult {
-    env: Rc<RefCell<LustEnv>>,
-    ret: Option<LustData>,
-    ast: Vec<LustData>,
+enum CallResult {
+    Ret(LustData),
+    Call(Rc<RefCell<LustEnv>>, LustData),
 }
 
 impl Interpreter {
@@ -37,47 +36,45 @@ impl Interpreter {
 
     fn eval_in_env(expr: &LustData, env: Rc<RefCell<LustEnv>>) -> Result<LustData, String> {
         let mut currentenv = env;
-        let mut currentast = vec![expr.clone()];
+        let mut currexpr = expr.clone();
         loop {
-            let expr = currentast.remove(0);
-            match expr {
+            match currexpr {
                 LustData::Symbol(ref s) => break currentenv.borrow().resolve(s),
                 LustData::List(ref v) => {
                     // Empty list does not result in function call.
                     if v.len() == 0 {
-                        break Ok(LustData::List(v.clone()));
+                        break Ok(currexpr);
                     }
-                    let fnres = Self::eval_list(v, currentenv.clone())?;
-                    if let Some(d) = fnres.ret {
-                        break Ok(d.clone());
+                    let fnres = Self::eval_list(v, currentenv)?;
+                    match fnres {
+                        CallResult::Ret(v) => break Ok(v),
+                        CallResult::Call(env, expr) => {
+                            currentenv = env;
+                            currexpr = expr;
+                        }
                     }
-                    currentenv = fnres.env;
-                    currentast = fnres.ast;
                 }
                 LustData::Builtin(_) => break Err("unexpected builtin".to_string()),
-                _ => break Ok(expr.clone()),
+                _ => break Ok(currexpr),
             }
         }
     }
 
-    fn eval_list(list: &Vec<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<FnResult, String> {
-        if let LustData::Symbol(s) = list.first().unwrap() {
-            let pred = env.borrow().resolve(s)?;
-            return match pred {
-                LustData::Builtin(ref f) => f(&list[1..], env),
-                LustData::Fn(ref lf) => Self::eval_funcall(lf, &list[1..], env),
-                LustData::Mac(ref lm) => Self::eval_macinv(lm, &list[1..], env),
-                _ => Err(format!("invalid list predicate: {}", pred)),
-            };
+    fn eval_list(list: &Vec<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
+        let pred = Self::eval_in_env(list.first().unwrap(), env.clone())?;
+        match pred {
+            LustData::Builtin(ref f) => f(&list[1..], env),
+            LustData::Fn(ref lf) => Self::eval_funcall(lf, &list[1..], env),
+            LustData::Mac(ref lm) => Self::eval_macinv(lm, &list[1..], env),
+            _ => Err(format!("invalid list predicate: {}", pred)),
         }
-        Err("internal error retreiving predicate from list".to_string())
     }
 
     fn eval_funcall(
         func: &LustFn,
         args: &[LustData],
         env: Rc<RefCell<LustEnv>>,
-    ) -> Result<FnResult, String> {
+    ) -> Result<CallResult, String> {
         if args.len() != func.params.len() {
             Err(format!(
                 "wrong number of arguments for function call. got {} and expected {}",
@@ -93,11 +90,7 @@ impl Interpreter {
                     .insert(param.clone(), Self::eval_in_env(arg, env.clone())?);
             }
             fnenv.borrow_mut().outer = Some(env);
-            Ok(FnResult {
-                env: fnenv,
-                ret: None,
-                ast: func.body.clone(),
-            })
+            Ok(CallResult::Call(fnenv, func.body.clone()))
         }
     }
 
@@ -105,7 +98,7 @@ impl Interpreter {
         func: &LustFn,
         args: &[LustData],
         env: Rc<RefCell<LustEnv>>,
-    ) -> Result<FnResult, String> {
+    ) -> Result<CallResult, String> {
         if args.len() != func.params.len() {
             Err(format!(
                 "wrong number of arguments for macro involcation. got {} and expected {}",
@@ -120,11 +113,7 @@ impl Interpreter {
             // Now that we are done mutating the enviroment, make it
             // the outer enviroment for the function.
             fnenv.borrow_mut().outer = Some(env);
-            Ok(FnResult {
-                env: fnenv,
-                ast: func.body.clone(),
-                ret: None,
-            })
+            Ok(CallResult::Call(fnenv, func.body.clone()))
         }
     }
 }
@@ -152,15 +141,15 @@ enum LustData {
     Number(f32),
     List(Vec<LustData>),
     Symbol(String),
-    Builtin(fn(&[LustData], Rc<RefCell<LustEnv>>) -> Result<FnResult, String>),
-    Fn(LustFn),
-    Mac(LustFn),
+    Builtin(fn(&[LustData], Rc<RefCell<LustEnv>>) -> Result<CallResult, String>),
+    Fn(Box<LustFn>),
+    Mac(Box<LustFn>),
 }
 
 #[derive(Clone, PartialEq)]
 struct LustFn {
     params: Vec<String>,
-    body: Vec<LustData>,
+    body: LustData,
 }
 
 struct LustEnv {
@@ -182,15 +171,24 @@ impl LustEnv {
         me.data.insert(
             "quote".to_string(),
             LustData::Builtin(
-                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<FnResult, String> {
+                |args: &[LustData], _env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
                     if args.len() != 1 {
                         Err(format!("quote expects 1 arg, got {}", args.len()))
                     } else {
-                        Ok(FnResult {
-                            env,
-                            ret: Some(args[0].clone()),
-                            ast: vec![],
-                        })
+                        Ok(CallResult::Ret(args[0].clone()))
+                    }
+                },
+            ),
+        );
+
+        me.data.insert(
+            "eval".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
+                    if args.len() != 1 {
+                        Err(format!("eval expects 1 arg, got {}", args.len()))
+                    } else {
+                        Ok(CallResult::Ret(Interpreter::eval_in_env(&args[0], env)?))
                     }
                 },
             ),
@@ -199,7 +197,7 @@ impl LustEnv {
         me.data.insert(
             "set".to_string(),
             LustData::Builtin(
-                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<FnResult, String> {
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
                     if args.len() != 2 {
                         Err(format!("def expects 2 args, got {}", args.len()))
                     } else {
@@ -208,11 +206,7 @@ impl LustEnv {
                             LustData::Symbol(ref s) => {
                                 let val = Interpreter::eval_in_env(&args[1], env.clone())?;
                                 env.borrow_mut().data.insert(s.clone(), val.clone());
-                                Ok(FnResult {
-                                    env: env,
-                                    ret: Some(val.clone()),
-                                    ast: vec![],
-                                })
+                                Ok(CallResult::Ret(val))
                             }
                             _ => Err("target of def expression must be a symbol".to_string()),
                         }
@@ -224,20 +218,16 @@ impl LustEnv {
         me.data.insert(
             "fn".to_string(),
             LustData::Builtin(
-                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<FnResult, String> {
-                    if args.len() < 2 {
-                        Err(
-                            "fn expects at least two paramaters, a param list and a body"
-                                .to_string(),
-                        )
+                |args: &[LustData], _env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
+                    if args.len() != 2 {
+                        Err("fn expects two paramaters, a param list and a body".to_string())
                     } else {
                         let params = Self::collect_param_list(&args[0])?;
-                        let body: Vec<LustData> = args[1..].iter().cloned().collect();
-                        Ok(FnResult {
-                            env,
-                            ret: Some(LustData::Fn(LustFn { params, body })),
-                            ast: vec![],
-                        })
+                        let body = args[1].clone();
+                        Ok(CallResult::Ret(LustData::Fn(Box::new(LustFn {
+                            params,
+                            body,
+                        }))))
                     }
                 },
             ),
@@ -246,20 +236,16 @@ impl LustEnv {
         me.data.insert(
             "macro".to_string(),
             LustData::Builtin(
-                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<FnResult, String> {
-                    if args.len() < 2 {
-                        Err(
-                            "macro expects at least two paramaters, a param list and a body"
-                                .to_string(),
-                        )
+                |args: &[LustData], _env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
+                    if args.len() != 2 {
+                        Err("fn expects two paramaters, a param list and a body".to_string())
                     } else {
                         let params = Self::collect_param_list(&args[0])?;
-                        let body: Vec<LustData> = args[1..].iter().cloned().collect();
-                        Ok(FnResult {
-                            env,
-                            ret: Some(LustData::Mac(LustFn { params, body })),
-                            ast: vec![],
-                        })
+                        let body = args[1].clone();
+                        Ok(CallResult::Ret(LustData::Mac(Box::new(LustFn {
+                            params,
+                            body,
+                        }))))
                     }
                 },
             ),
@@ -268,7 +254,7 @@ impl LustEnv {
         me.data.insert(
             "if".to_string(),
             LustData::Builtin(
-                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<FnResult, String> {
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
                     if args.len() != 3 {
                         Err("if expects three paramaters condition, then, and else".to_string())
                     } else {
@@ -281,17 +267,9 @@ impl LustEnv {
                         // TODO: if should create a new enviroment
                         // with its new children.
                         if cond {
-                            Ok(FnResult {
-                                env,
-                                ret: None,
-                                ast: vec![args[1].clone()],
-                            })
+                            Ok(CallResult::Call(env, args[1].clone()))
                         } else {
-                            Ok(FnResult {
-                                env,
-                                ret: None,
-                                ast: vec![args[2].clone()],
-                            })
+                            Ok(CallResult::Call(env, args[2].clone()))
                         }
                     }
                 },
@@ -301,17 +279,13 @@ impl LustEnv {
         me.data.insert(
             "println".to_string(),
             LustData::Builtin(
-                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<FnResult, String> {
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
                     if args.len() != 1 {
                         Err("println expects one paramater".to_string())
                     } else {
-                        let target = Interpreter::eval_in_env(&args[0], env.clone())?;
+                        let target = Interpreter::eval_in_env(&args[0], env)?;
                         print!("{}\n", target);
-                        Ok(FnResult {
-                            env,
-                            ret: Some(LustData::List(vec![])),
-                            ast: vec![],
-                        })
+                        Ok(CallResult::Ret(LustData::List(vec![])))
                     }
                 },
             ),
@@ -320,17 +294,13 @@ impl LustEnv {
         me.data.insert(
             "negate".to_string(),
             LustData::Builtin(
-                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<FnResult, String> {
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
                     if args.len() != 1 {
                         Err("negate expects one paramater".to_string())
                     } else {
-                        let target = Interpreter::eval_in_env(&args[0], env.clone())?;
+                        let target = Interpreter::eval_in_env(&args[0], env)?;
                         match target {
-                            LustData::Number(n) => Ok(FnResult {
-                                env,
-                                ret: Some(LustData::Number(-n)),
-                                ast: vec![],
-                            }),
+                            LustData::Number(n) => Ok(CallResult::Ret(LustData::Number(-n))),
                             _ => Err("non numeric argument to negate".to_string()),
                         }
                     }
@@ -341,7 +311,7 @@ impl LustEnv {
         me.data.insert(
             "add".to_string(),
             LustData::Builtin(
-                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<FnResult, String> {
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
                     if args.len() < 1 {
                         Err("add expects two paramaters".to_string())
                     } else {
@@ -349,15 +319,32 @@ impl LustEnv {
                             LustData::Number(n) => n,
                             _ => return Err("non numeric argument to add".to_string()),
                         };
-                        let rhs = match Interpreter::eval_in_env(&args[1], env.clone())? {
+                        let rhs = match Interpreter::eval_in_env(&args[1], env)? {
                             LustData::Number(n) => n,
                             _ => return Err("non numeric argument to add".to_string()),
                         };
-                        Ok(FnResult {
-                            env,
-                            ret: Some(LustData::Number(lhs + rhs)),
-                            ast: vec![],
-                        })
+                        Ok(CallResult::Ret(LustData::Number(lhs + rhs)))
+                    }
+                },
+            ),
+        );
+
+        me.data.insert(
+            "sub".to_string(),
+            LustData::Builtin(
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
+                    if args.len() < 1 {
+                        Err("sub expects two paramaters".to_string())
+                    } else {
+                        let lhs = match Interpreter::eval_in_env(&args[0], env.clone())? {
+                            LustData::Number(n) => n,
+                            _ => return Err("non numeric argument to sub".to_string()),
+                        };
+                        let rhs = match Interpreter::eval_in_env(&args[1], env)? {
+                            LustData::Number(n) => n,
+                            _ => return Err("non numeric argument to sub".to_string()),
+                        };
+                        Ok(CallResult::Ret(LustData::Number(lhs - rhs)))
                     }
                 },
             ),
@@ -366,7 +353,7 @@ impl LustEnv {
         me.data.insert(
             "lt".to_string(),
             LustData::Builtin(
-                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<FnResult, String> {
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
                     if args.len() < 1 {
                         Err("add expects two paramaters".to_string())
                     } else {
@@ -374,19 +361,15 @@ impl LustEnv {
                             LustData::Number(n) => n,
                             _ => return Err("non numeric argument to add".to_string()),
                         };
-                        let rhs = match Interpreter::eval_in_env(&args[1], env.clone())? {
+                        let rhs = match Interpreter::eval_in_env(&args[1], env)? {
                             LustData::Number(n) => n,
                             _ => return Err("non numeric argument to add".to_string()),
                         };
-                        Ok(FnResult {
-                            env,
-                            ast: vec![],
-                            ret: Some(if lhs < rhs {
-                                LustData::Symbol("#t".to_string())
-                            } else {
-                                LustData::List(vec![])
-                            }),
-                        })
+                        Ok(CallResult::Ret(if lhs < rhs {
+                            LustData::Symbol("#t".to_string())
+                        } else {
+                            LustData::List(vec![])
+                        }))
                     }
                 },
             ),
@@ -395,21 +378,17 @@ impl LustEnv {
         me.data.insert(
             "eq".to_string(),
             LustData::Builtin(
-                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<FnResult, String> {
+                |args: &[LustData], env: Rc<RefCell<LustEnv>>| -> Result<CallResult, String> {
                     if args.len() != 2 {
                         Err("eq expects two arguments".to_string())
                     } else {
                         let lhs = Interpreter::eval_in_env(&args[0], env.clone())?;
-                        let rhs = Interpreter::eval_in_env(&args[1], env.clone())?;
-                        Ok(FnResult {
-                            env,
-                            ast: vec![],
-                            ret: Some(if lhs == rhs {
-                                LustData::Symbol("#t".to_string())
-                            } else {
-                                LustData::List(vec![])
-                            }),
-                        })
+                        let rhs = Interpreter::eval_in_env(&args[1], env)?;
+                        Ok(CallResult::Ret(if lhs == rhs {
+                            LustData::Symbol("#t".to_string())
+                        } else {
+                            LustData::List(vec![])
+                        }))
                     }
                 },
             ),
@@ -493,9 +472,7 @@ impl fmt::Display for LustData {
                     }
                     write!(f, "{})", func.params[func.params.len() - 1])?;
                 }
-                for e in &func.body {
-                    write!(f, " {}", e)?;
-                }
+                write!(f, " {}", func.body)?;
                 write!(f, ")")
             }
             Self::Mac(func) => {
@@ -509,9 +486,7 @@ impl fmt::Display for LustData {
                     }
                     write!(f, "{})", func.params[func.params.len() - 1])?;
                 }
-                for e in &func.body {
-                    write!(f, " {}", e)?;
-                }
+                write!(f, " {}", func.body)?;
                 write!(f, ")")
             }
         }
