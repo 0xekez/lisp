@@ -142,8 +142,8 @@ enum LustData {
     List(Vec<LustData>),
     Symbol(String),
     Builtin(fn(&[LustData], Rc<RefCell<LustEnv>>) -> Result<CallResult, String>),
-    Fn(Box<LustFn>),
-    Mac(Box<LustFn>),
+    Fn(Rc<LustFn>),
+    Mac(Rc<LustFn>),
 }
 
 #[derive(Clone, PartialEq)]
@@ -224,7 +224,7 @@ impl LustEnv {
                     } else {
                         let params = Self::collect_param_list(&args[0])?;
                         let body = args[1].clone();
-                        Ok(CallResult::Ret(LustData::Fn(Box::new(LustFn {
+                        Ok(CallResult::Ret(LustData::Fn(Rc::new(LustFn {
                             params,
                             body,
                         }))))
@@ -242,7 +242,7 @@ impl LustEnv {
                     } else {
                         let params = Self::collect_param_list(&args[0])?;
                         let body = args[1].clone();
-                        Ok(CallResult::Ret(LustData::Mac(Box::new(LustFn {
+                        Ok(CallResult::Ret(LustData::Mac(Rc::new(LustFn {
                             params,
                             body,
                         }))))
