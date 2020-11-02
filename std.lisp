@@ -101,20 +101,29 @@
 ;; When COND is true executes and returns BODY's value.
 (set 'when (macro (cond body) (list 'if cond body ())))
 
-;; Takes a value to switch on and a list of pairs where the first item
-;; in each pair is a value to be compared and the second is an
-;; expression to evaluate if the value to be compared is the same as
-;; the value being switched on.
-;;
-;; For example:
-;;
-;; lust> (match 1 (1 'one) (2 'two))
-;; => 'two
-(set 'match (macro (switch & cases)
+;; Much like Scheme's condition. Takes a list of pairs where the first
+;; argument and the second is an expression to evaluate if the
+;; argument is true. Iterates over that list and return's the body of
+;; the first one that evaluates to true. Optionally there can be a
+;; special pair with the form (else body) that must appear in the
+;; terminal position. If no other pairs evaluate to true that arm will
+;; run.
+(set 'cond (macro (& cases)
 		  (do
-		   (let 'find-match (fn (l)
-					(if l
-					    (if (eq (eval (car (car l))) switch)
-						(car (cdr (car l)))
-					      (find-match (cdr l))) ())))
+		   (let 'arm-matches (fn (arm)
+					 (if (eval (car arm))
+					     (cdr arm)
+					   #f)))
+		   (let 'is-else-arm (fn (arm)
+					 (eq (car arm) 'else)))
+		   (let 'find-match (fn (cases)
+					(if cases
+					    (if (is-else-arm (car cases))
+						(if (cdr cases)
+						    (error '"else branch in non-terminal position")
+						  (car (cdr (car cases))))
+					      (if (arm-matches (car cases))
+						  (car (cdr (car cases)))
+						(find-match (cdr cases))))
+					  ())))
 		   (find-match cases))))

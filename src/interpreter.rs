@@ -119,7 +119,7 @@ impl Interpreter {
     pub fn macroexpand(mut ast: LustData, env: Rc<RefCell<LustEnv>>) -> Result<LustData, String> {
         loop {
             if !Self::is_macro_call(&ast, env.clone()) {
-                break Ok(ast.clone());
+                break Ok(ast);
             }
             ast = Self::eval_without_expansion(ast, env.clone())?;
         }
@@ -130,8 +130,8 @@ impl Interpreter {
         let pred = Self::eval_in_env(list.first().unwrap(), env.clone())?;
         match pred {
             LustData::Builtin(ref f) => f(&list[1..], env),
-            LustData::Fn(ref lf) => Self::eval_funcall(lf, &list[1..], env),
-            LustData::Mac(ref lm) => Self::eval_funcall(lm, &list[1..], env),
+            LustData::Fn(ref lf) => Self::eval_funcall(lf, &list[1..], env, true),
+            LustData::Mac(ref lm) => Self::eval_funcall(lm, &list[1..], env, false),
             _ => Err(format!("invalid list predicate: {}", pred)),
         }
     }
@@ -142,6 +142,7 @@ impl Interpreter {
         func: &LustFn,
         args: &[LustData],
         env: Rc<RefCell<LustEnv>>,
+        eval_args: bool,
     ) -> Result<CallResult, String> {
         if (func.is_varadic() && args.len() < func.get_min_param_count())
             || (!func.is_varadic() && args.len() != func.params.len())
@@ -161,6 +162,7 @@ impl Interpreter {
             }
         } else {
             let fnenv = LustEnv::new();
+
             for (i, param) in func.params.iter().enumerate() {
                 if param == "&" {
                     let bind = func.params[i + 1].clone();
@@ -169,19 +171,26 @@ impl Interpreter {
                     } else {
                         let mut res = Vec::with_capacity(args.len() - i);
                         for e in &args[i..] {
-                            res.push(Self::eval_in_env(e, env.clone())?);
+                            let arg = if eval_args {
+                                Self::eval_in_env(e, env.clone())?
+                            } else {
+                                e.clone()
+                            };
+                            res.push(arg);
                         }
                         LustData::List(res)
                     };
                     fnenv.borrow_mut().data.insert(bind, val);
                     break;
                 }
-                let arg = &args[i];
-                fnenv
-                    .borrow_mut()
-                    .data
-                    .insert(param.clone(), Self::eval_in_env(arg, env.clone())?);
+                let arg = if eval_args {
+                    Self::eval_in_env(&args[i], env.clone())?
+                } else {
+                    args[i].clone()
+                };
+                fnenv.borrow_mut().data.insert(param.clone(), arg);
             }
+
             fnenv.borrow_mut().outer = Some(env);
             Ok(CallResult::Call(fnenv, func.body.clone()))
         }
@@ -208,12 +217,22 @@ impl Expr {
 
 #[derive(Clone)]
 pub enum LustData {
+    /// A floating point number
     Number(f32),
+    /// A list.
     List(Vec<LustData>),
+    /// A symbol. Used to represent IDs and files in import
+    /// expressions.
     Symbol(String),
+    /// A character. The building block of a string.
     Char(char),
+    /// A builtin function.
     Builtin(fn(&[LustData], Rc<RefCell<LustEnv>>) -> Result<CallResult, String>),
+    /// A user defined function.
     Fn(Rc<LustFn>),
+    /// A user defined macro. Macros differ from functions in that
+    /// their arguments are implicitly quoted and that they are
+    /// evlauted at compile time.
     Mac(Rc<LustFn>),
 }
 
@@ -273,6 +292,9 @@ impl LustData {
     pub fn stringify(&self) -> Option<String> {
         match self {
             LustData::List(l) => {
+                if l.len() == 0 {
+                    return None;
+                }
                 let mut res = String::with_capacity(l.len());
                 for d in l {
                     let c = match d.expect_char() {
@@ -330,6 +352,7 @@ impl LustEnv {
         me.install_builtin("set", builtins::set);
         me.install_builtin("let", builtins::let_);
         me.install_builtin("fn", builtins::fn_);
+        me.install_builtin("error", builtins::error);
         me.install_builtin("macro", builtins::macro_);
         me.install_builtin("macroexpand", builtins::macroexpand);
         me.install_builtin("println", builtins::println_);

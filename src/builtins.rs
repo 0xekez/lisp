@@ -129,6 +129,12 @@ pub fn macroexpand(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallR
     )?))
 }
 
+pub fn error(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
+    check_arg_len("error", 1, args)?;
+    let message = Interpreter::eval_in_env(&args[0], env)?;
+    Err(format!("{}", message))
+}
+
 /// Takes on argument and prints it to stdout followed by a newline.
 pub fn println_(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("println", 1, args)?;
