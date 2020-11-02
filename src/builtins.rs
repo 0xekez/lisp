@@ -16,10 +16,10 @@ pub fn quote(args: &[LustData], _env: Rc<RefCell<LustEnv>>) -> Result<CallResult
 pub fn car(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("car", 1, args)?;
     let expr = Interpreter::eval_in_env(&args[0], env)?;
-    let l = expect_list(&expr)?;
+    let l = LustData::expect_list(&expr)?;
     Ok(CallResult::Ret(match l.first().take() {
         Some(d) => d.clone(),
-        None => get_empty_list(),
+        None => LustData::get_empty_list(),
     }))
 }
 
@@ -28,10 +28,10 @@ pub fn car(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, S
 pub fn cdr(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("cdr", 1, args)?;
     let expr = Interpreter::eval_in_env(&args[0], env)?;
-    let l = expect_list(&expr)?;
+    let l = LustData::expect_list(&expr)?;
     Ok(CallResult::Ret(match l.split_first() {
         Some((_, rest)) => LustData::List(rest.to_vec()),
-        None => get_empty_list(),
+        None => LustData::get_empty_list(),
     }))
 }
 
@@ -41,7 +41,7 @@ pub fn cons(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, 
     check_arg_len("cons", 2, args)?;
     let prepend = Interpreter::eval_in_env(&args[0], env.clone())?;
     let expr = Interpreter::eval_in_env(&args[1], env)?;
-    let l = expect_list(&expr)?;
+    let l = LustData::expect_list(&expr)?;
     let mut ret = l.clone();
     ret.insert(0, prepend);
     Ok(CallResult::Ret(LustData::List(ret)))
@@ -72,7 +72,7 @@ pub fn eval(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, 
 pub fn set(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("set", 2, args)?;
     let target = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let target = expect_symbol(&target)?;
+    let target = LustData::expect_symbol(&target)?;
     let val = Interpreter::eval_in_env(&args[1], env.clone())?;
     env.borrow_mut().set_global(target.clone(), &val);
     Ok(CallResult::Ret(val))
@@ -82,7 +82,7 @@ pub fn set(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, S
 pub fn let_(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("let", 2, args)?;
     let target = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let target = expect_symbol(&target)?;
+    let target = LustData::expect_symbol(&target)?;
     let val = Interpreter::eval_in_env(&args[1], env.clone())?;
     env.borrow_mut().data.insert(target.clone(), val.clone());
     Ok(CallResult::Ret(val))
@@ -134,14 +134,33 @@ pub fn println_(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResu
     check_arg_len("println", 1, args)?;
     let val = Interpreter::eval_in_env(&args[0], env)?;
     println!("{}", val);
-    Ok(CallResult::Ret(get_empty_list()))
+    Ok(CallResult::Ret(LustData::get_empty_list()))
+}
+
+/// Evaluates and imports the global symbol table from another
+/// file. For example, to add the stdlib to a project: `(import
+/// 'std)`. Takes the relative path to the file as an argument and
+/// appends .lisp before reading the file.
+pub fn import(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
+    check_arg_len("import", 1, args)?;
+    let target = Interpreter::eval_in_env(&args[0], env.clone())?;
+    let mut target = LustData::expect_symbol(&target)?.clone();
+    target.push_str(".lisp");
+    let evaluator = crate::interpret_file(&target)?;
+    env.borrow_mut()
+        .data
+        // Sadly need to clone here. Would be unsafe to move out of a
+        // reference counted value because we'd be liable to give
+        // other owners a headache.
+        .extend((*evaluator.global_env.borrow_mut()).data.clone());
+    Ok(CallResult::Ret(LustData::get_empty_list()))
 }
 
 /// Takes one numeric argument and negates it.
 pub fn negate(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("negate", 1, args)?;
     let val = Interpreter::eval_in_env(&args[0], env)?;
-    let val = expect_num(&val)?;
+    let val = LustData::expect_num(&val)?;
     Ok(CallResult::Ret(LustData::Number(val)))
 }
 
@@ -149,9 +168,9 @@ pub fn negate(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult
 pub fn add(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("add", 2, args)?;
     let l = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let l = expect_num(&l)?;
+    let l = LustData::expect_num(&l)?;
     let r = Interpreter::eval_in_env(&args[1], env.clone())?;
-    let r = expect_num(&r)?;
+    let r = LustData::expect_num(&r)?;
     Ok(CallResult::Ret(LustData::Number(l + r)))
 }
 
@@ -159,9 +178,9 @@ pub fn add(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, S
 pub fn sub(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("sub", 2, args)?;
     let l = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let l = expect_num(&l)?;
+    let l = LustData::expect_num(&l)?;
     let r = Interpreter::eval_in_env(&args[1], env.clone())?;
-    let r = expect_num(&r)?;
+    let r = LustData::expect_num(&r)?;
     Ok(CallResult::Ret(LustData::Number(l - r)))
 }
 
@@ -169,9 +188,9 @@ pub fn sub(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, S
 pub fn mul(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("mul", 2, args)?;
     let l = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let l = expect_num(&l)?;
+    let l = LustData::expect_num(&l)?;
     let r = Interpreter::eval_in_env(&args[1], env.clone())?;
-    let r = expect_num(&r)?;
+    let r = LustData::expect_num(&r)?;
     Ok(CallResult::Ret(LustData::Number(l * r)))
 }
 
@@ -179,9 +198,9 @@ pub fn mul(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, S
 pub fn div(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("div", 2, args)?;
     let l = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let l = expect_num(&l)?;
+    let l = LustData::expect_num(&l)?;
     let r = Interpreter::eval_in_env(&args[1], env.clone())?;
-    let r = expect_num(&r)?;
+    let r = LustData::expect_num(&r)?;
     Ok(CallResult::Ret(LustData::Number(l / r)))
 }
 
@@ -190,9 +209,9 @@ pub fn div(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, S
 pub fn lt(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("lt", 2, args)?;
     let l = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let l = expect_num(&l)?;
+    let l = LustData::expect_num(&l)?;
     let r = Interpreter::eval_in_env(&args[1], env.clone())?;
-    let r = expect_num(&r)?;
+    let r = LustData::expect_num(&r)?;
     Ok(CallResult::Ret(get_truthy_equiv(l < r)))
 }
 
@@ -201,9 +220,9 @@ pub fn lt(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, St
 pub fn gt(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("gt", 2, args)?;
     let l = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let l = expect_num(&l)?;
+    let l = LustData::expect_num(&l)?;
     let r = Interpreter::eval_in_env(&args[1], env.clone())?;
-    let r = expect_num(&r)?;
+    let r = LustData::expect_num(&r)?;
     Ok(CallResult::Ret(get_truthy_equiv(l > r)))
 }
 
@@ -231,50 +250,21 @@ fn check_arg_len(name: &str, expected: usize, args: &[LustData]) -> Result<(), S
     }
 }
 
-/// Extracts a list from some data or returns an error.
-fn expect_list<'a>(expr: &'a LustData) -> Result<&'a Vec<LustData>, String> {
-    match expr {
-        LustData::List(ref v) => Ok(v),
-        _ => Err(format!("expected list, got {}", expr)),
-    }
-}
-
-/// Extracts a symbol from some data or returns an error.
-fn expect_symbol<'a>(expr: &'a LustData) -> Result<&'a String, String> {
-    match expr {
-        LustData::Symbol(ref s) => Ok(s),
-        _ => Err(format!("expected symbol, got {}", expr)),
-    }
-}
-
-/// Extracts a number from some data or returns an error.
-fn expect_num(expr: &LustData) -> Result<f32, String> {
-    match expr {
-        LustData::Number(f) => Ok(*f),
-        _ => Err(format!("expected number, got {}", expr)),
-    }
-}
-
-/// Gets an empty list.
-fn get_empty_list() -> LustData {
-    LustData::List(vec![])
-}
-
 /// Get's the Lust truthy equivalent to Rust boolean value.
 fn get_truthy_equiv(cond: bool) -> LustData {
     if cond {
         LustData::Symbol("#t".to_string())
     } else {
-        get_empty_list()
+        LustData::get_empty_list()
     }
 }
 
 /// Collects a list of function paramaters or errors.
 fn collect_param_list(expr: &LustData) -> Result<Vec<String>, String> {
-    let v = expect_list(expr)?;
+    let v = LustData::expect_list(expr)?;
     let mut res = Vec::with_capacity(v.len());
     for (i, e) in v.iter().enumerate() {
-        let name = expect_symbol(e)?;
+        let name = LustData::expect_symbol(e)?;
         res.push(name.clone());
         if name == "&" {
             if i + 2 != v.len() {
@@ -290,7 +280,7 @@ fn collect_param_list(expr: &LustData) -> Result<Vec<String>, String> {
 
 /// Converts some data to a Rust boolean.
 fn truthy(expr: &LustData) -> bool {
-    match expect_list(expr) {
+    match LustData::expect_list(expr) {
         Ok(ref v) => !(v.len() == 0),
         Err(_) => true,
     }

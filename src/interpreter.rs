@@ -8,7 +8,7 @@ use std::rc::Rc;
 /// An interpreter for Lust code.
 pub struct Interpreter {
     /// The global enviroment in which functions are evlauted.
-    global_env: Rc<RefCell<LustEnv>>,
+    pub global_env: Rc<RefCell<LustEnv>>,
 }
 
 /// The result of calling a function. If the function is a builtin the
@@ -200,8 +200,8 @@ impl Expr {
                 }
                 Ok(LustData::List(res))
             }
+            ExprVal::String(s) => Ok(LustData::from_string(s)),
             ExprVal::Id(s) => Ok(LustData::Symbol(s.clone())),
-            _ => Err("unsuported form".to_string()),
         }
     }
 }
@@ -211,6 +211,7 @@ pub enum LustData {
     Number(f32),
     List(Vec<LustData>),
     Symbol(String),
+    Char(char),
     Builtin(fn(&[LustData], Rc<RefCell<LustEnv>>) -> Result<CallResult, String>),
     Fn(Rc<LustFn>),
     Mac(Rc<LustFn>),
@@ -225,6 +226,66 @@ pub struct LustFn {
 pub struct LustEnv {
     pub data: HashMap<String, LustData>,
     outer: Option<Rc<RefCell<LustEnv>>>,
+}
+
+impl LustData {
+    pub fn from_string(s: &str) -> LustData {
+        let v = s.chars().map(|c| LustData::Char(c)).collect();
+        LustData::List(v)
+    }
+
+    /// Extracts a list from some data or returns an error.
+    pub fn expect_list<'a>(&'a self) -> Result<&'a Vec<LustData>, String> {
+        match self {
+            LustData::List(ref v) => Ok(v),
+            _ => Err(format!("expected list, got {}", self)),
+        }
+    }
+
+    /// Extracts a symbol from some data or returns an error.
+    pub fn expect_symbol<'a>(&'a self) -> Result<&'a String, String> {
+        match self {
+            LustData::Symbol(ref s) => Ok(s),
+            _ => Err(format!("expected symbol, got {}", self)),
+        }
+    }
+
+    /// Extracts a number from some data or returns an error.
+    pub fn expect_num(&self) -> Result<f32, String> {
+        match self {
+            LustData::Number(f) => Ok(*f),
+            _ => Err(format!("expected number, got {}", self)),
+        }
+    }
+
+    pub fn expect_char(&self) -> Result<char, String> {
+        match self {
+            LustData::Char(c) => Ok(*c),
+            _ => Err(format!("expected number, got {}", self)),
+        }
+    }
+
+    /// Gets an empty list.
+    pub fn get_empty_list() -> LustData {
+        LustData::List(vec![])
+    }
+
+    pub fn stringify(&self) -> Option<String> {
+        match self {
+            LustData::List(l) => {
+                let mut res = String::with_capacity(l.len());
+                for d in l {
+                    let c = match d.expect_char() {
+                        Ok(c) => c,
+                        Err(_) => return None,
+                    };
+                    res.push(c);
+                }
+                Some(res)
+            }
+            _ => None,
+        }
+    }
 }
 
 impl LustFn {
@@ -272,6 +333,7 @@ impl LustEnv {
         me.install_builtin("macro", builtins::macro_);
         me.install_builtin("macroexpand", builtins::macroexpand);
         me.install_builtin("println", builtins::println_);
+        me.install_builtin("import", builtins::import);
         me.install_builtin("negate", builtins::negate);
         me.install_builtin("add", builtins::add);
         me.install_builtin("sub", builtins::sub);
@@ -312,6 +374,7 @@ impl PartialEq for LustData {
             }
             (LustData::Fn(l), LustData::Fn(r)) => l == r,
             (LustData::Mac(l), LustData::Mac(r)) => l == r,
+            (LustData::Char(l), LustData::Char(r)) => l == r,
             (_, _) => false,
         }
     }
@@ -322,47 +385,56 @@ impl PartialEq for LustData {
 // (set 'name (fn (a))) -> fn name (a, b) -> (return) { body }
 impl fmt::Display for LustData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Number(n) => write!(f, "{}", n),
-            Self::List(l) => {
-                if l.is_empty() {
-                    return write!(f, "()");
-                }
-                write!(f, "(")?;
-                for e in &l[..(l.len() - 1)] {
-                    write!(f, "{} ", e)?;
-                }
-                write!(f, "{})", l[l.len() - 1])
-            }
-            Self::Symbol(s) => write!(f, "{}", s),
-            Self::Builtin(_) => write!(f, "<builtin anonymous fn>"),
-            Self::Fn(func) => {
-                write!(f, "(fn ")?;
-                if func.params.is_empty() {
-                    write!(f, "()")?;
-                } else {
+        if let Some(s) = self.stringify() {
+            write!(f, "\"{}\"", s)
+        } else {
+            match self {
+                Self::Number(n) => write!(f, "{}", n),
+                Self::Char(c) => write!(f, "'{}'", c),
+
+                Self::List(l) => {
+                    if l.is_empty() {
+                        return write!(f, "()");
+                    }
                     write!(f, "(")?;
-                    for e in &func.params[..(func.params.len() - 1)] {
+                    for e in &l[..(l.len() - 1)] {
                         write!(f, "{} ", e)?;
                     }
-                    write!(f, "{})", func.params[func.params.len() - 1])?;
+                    write!(f, "{})", l[l.len() - 1])
                 }
-                write!(f, " {}", func.body)?;
-                write!(f, ")")
-            }
-            Self::Mac(func) => {
-                write!(f, "(macro ")?;
-                if func.params.is_empty() {
-                    write!(f, "()")?;
-                } else {
-                    write!(f, "(")?;
-                    for e in &func.params[..(func.params.len() - 1)] {
-                        write!(f, "{} ", e)?;
+
+                Self::Symbol(s) => write!(f, "{}", s),
+                Self::Builtin(_) => write!(f, "<builtin anonymous fn>"),
+
+                Self::Fn(func) => {
+                    write!(f, "(fn ")?;
+                    if func.params.is_empty() {
+                        write!(f, "()")?;
+                    } else {
+                        write!(f, "(")?;
+                        for e in &func.params[..(func.params.len() - 1)] {
+                            write!(f, "{} ", e)?;
+                        }
+                        write!(f, "{})", func.params[func.params.len() - 1])?;
                     }
-                    write!(f, "{})", func.params[func.params.len() - 1])?;
+                    write!(f, " {}", func.body)?;
+                    write!(f, ")")
                 }
-                write!(f, " {}", func.body)?;
-                write!(f, ")")
+
+                Self::Mac(func) => {
+                    write!(f, "(macro ")?;
+                    if func.params.is_empty() {
+                        write!(f, "()")?;
+                    } else {
+                        write!(f, "(")?;
+                        for e in &func.params[..(func.params.len() - 1)] {
+                            write!(f, "{} ", e)?;
+                        }
+                        write!(f, "{})", func.params[func.params.len() - 1])?;
+                    }
+                    write!(f, " {}", func.body)?;
+                    write!(f, ")")
+                }
             }
         }
     }

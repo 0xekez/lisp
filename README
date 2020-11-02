@@ -11,12 +11,12 @@ following:
 - Tail recursion
 - Proper macros
 - Lists and numbers
+- Importing of other files
+- Character / string support
 
 It is not yet functional in the following ways:
 
-- No character / string support
 - Only extremely basic I/O support
-- No importing of other files
 - No garbage collection
 
 The JIT compiler supports almost nothing and is extremely experimental
