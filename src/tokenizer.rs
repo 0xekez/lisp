@@ -69,11 +69,19 @@ impl<'a> Tokenizer<'a> {
         match self.reader.peek() {
             None => None,
             Some(c) => Some(match c {
+                // Comments
+                ';' => {
+                    self.reader.skip_line();
+                    return self.next_token();
+                }
                 '0'..='9' => self.tokenize_number(),
                 '(' => self.eat_token_at_point(TokenType::Oparen),
                 ')' => self.eat_token_at_point(TokenType::Cparen),
                 '\'' => self.eat_token_at_point(TokenType::Quote),
-                '-' => self.eat_token_at_point(TokenType::Negate),
+                '-' => match self.reader.peek_2() {
+                    Some('0'..='9') => self.eat_token_at_point(TokenType::Negate),
+                    _ => self.eat_token_at_point(TokenType::Id("-".to_string())),
+                },
                 '"' => self.tokenize_string(),
                 _ => self.tokenize_id(),
             }),

@@ -92,6 +92,19 @@ impl<'a> Reader<'a> {
         }
     }
 
+    pub fn skip_line(&mut self) {
+        loop {
+            match self.next_char() {
+                Some(c) => {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
+    }
+
     pub fn has_next(&mut self) -> bool {
         self.peek() == None
     }
@@ -104,6 +117,15 @@ impl<'a> Reader<'a> {
     /// Get the current character and advance the reader.
     pub fn next(&mut self) -> Option<char> {
         self.next_char()
+    }
+
+    pub fn peek_2(&self) -> Option<char> {
+        let mut copy = self.chars.clone();
+        copy.next();
+        match copy.peek() {
+            Some(s) => Some(s.clone()),
+            None => None,
+        }
     }
 
     /// Get the readers current location.
