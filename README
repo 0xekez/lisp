@@ -1,4 +1,5 @@
 Lust
+====
 
 Lust is a very early project about writing a JIT / Interpreted Lisp.
 
@@ -33,3 +34,30 @@ The timeline for this project looks something like this:
   Emacs. Other editors are down the line becuase I don't use them.
 - Once the language is plesant enough to use that programs written in
   it are large enough to be slow incrementally add JIT support.
+
+Building Lust
+=============
+
+To built Lust you'll need a working Rust installation. First clone
+this repository and then build / run it using cargo. This workflow
+will probably look something like this:
+
+```
+git clone https://github.com/ZekeMedley/lust.git
+cd lust
+cargo build
+cargo run
+```
+
+If you'd like to start a repl with the standard library loaded in,
+change `cargo run` above to `cargo run std.lisp`.
+
+
+Learning Lust
+=============
+
+Lust is very unstable at this point so I've intentionally avoided
+writing any external documentation for the lanaguage. If you are
+determined though I have been keeping documentation up to data in
+`src/builtins.rs` and in `std.lisp` where builtins and the standard
+library are defined.
