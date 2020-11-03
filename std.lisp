@@ -108,7 +108,7 @@
 
 ;; When COND is true executes and returns BODY's value.
 ;; WARNING: I beleive that this is broken
-(set 'when (macro (cond body) (if (eval cond) (eval body) ())))
+(setq when (macro (cond body) `(if ,cond ,body ()))
 
 ;; Much like Scheme's condition. Takes a list of pairs where the first
 ;; argument and the second is an expression to evaluate if the
@@ -139,7 +139,7 @@
 						(find-match (cdr cases)))))))
 		   (find-match cases)))))
 
-;; Define special form with the same form as scheme's. Allows for
+;; `define` special form with the same form as scheme's. Allows for
 ;; defining functions and variables as follows:
 ;;
 ;;   lust> (define one 1)

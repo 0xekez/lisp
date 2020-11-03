@@ -3,6 +3,8 @@ Lust
 
 Lust is a very early project about writing a JIT / Interpreted Lisp.
 
+You can find documentation about Lust at https://zmedley.com/lust
+
 At the moment, Lust has a functional but incomplete interpreter and
 some very early sketches of JIT compilation using Mozilla's Cranelift
 as a backend. The interpreter is functional in that it supports the
