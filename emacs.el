@@ -20,11 +20,12 @@
     ("eq" . 'font-lock-function-name-face)
     ("#t" . 'font-lock-constant-face)
     ("#f" . 'font-lock-constant-face)
+    ("[0-9]+" . 'font-lock-negation-char-face)
     ("'" . 'font-lock-preprocessor-face)
     ("quote" . 'font-lock-preprocessor-face)
     ("error" . 'font-lock-warning-face))
   '("\\.lust$")                    ;; files that trigger this mode
-   nil                              ;; any other functions to call
+   (rainbow-delimiters-mode)                              ;; any other functions to call
   "Lust mode"
 )
 

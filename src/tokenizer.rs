@@ -17,6 +17,10 @@ pub enum TokenType {
     Cparen,
     /// A quote '
     Quote,
+    // A quaziquote `
+    Quaziquote,
+    // A comma
+    Comma,
     // A - sign
     Negate,
     /// An identifier. This is any sequence of characters not matched
@@ -78,6 +82,8 @@ impl<'a> Tokenizer<'a> {
                 '(' => self.eat_token_at_point(TokenType::Oparen),
                 ')' => self.eat_token_at_point(TokenType::Cparen),
                 '\'' => self.eat_token_at_point(TokenType::Quote),
+                '`' => self.eat_token_at_point(TokenType::Quaziquote),
+                ',' => self.eat_token_at_point(TokenType::Comma),
                 '-' => match self.reader.peek_2() {
                     Some('0'..='9') => self.eat_token_at_point(TokenType::Negate),
                     _ => self.eat_token_at_point(TokenType::Id("-".to_string())),

@@ -151,7 +151,7 @@ impl Interpreter {
                 Err(format!(
                     "wrong number of arguments for function call. got {} and expected at least {}",
                     args.len(),
-                    func.params.len()
+                    func.params.len() - 1 // Minus one to offset for & argument
                 ))
             } else {
                 Err(format!(
@@ -344,6 +344,7 @@ impl LustEnv {
         };
 
         me.install_builtin("quote", builtins::quote);
+        me.install_builtin("quaziquote", builtins::quaziquote);
         me.install_builtin("car", builtins::car);
         me.install_builtin("cdr", builtins::cdr);
         me.install_builtin("cons", builtins::cons);

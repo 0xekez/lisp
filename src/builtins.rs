@@ -241,6 +241,57 @@ pub fn eq(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, St
     Ok(CallResult::Ret(get_truthy_equiv(l == r)))
 }
 
+// Evaluate each argument in a comma expression, ignore all others.
+pub fn quaziquote(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
+    check_arg_len("quaziquote", 1, args)?;
+    let l = args[0].expect_list()?;
+    let mut res = Vec::with_capacity(l.len());
+    for item in l {
+        res.push(eval_commas(item, env.clone())?);
+    }
+    Ok(CallResult::Ret(LustData::List(res)))
+}
+
+fn eval_commas(data: &LustData, env: Rc<RefCell<LustEnv>>) -> Result<LustData, String> {
+    // If it's a comma, evaluate and return its argument. If it's a
+    // non-list type return it. If it's a list return a new list that
+    // is the result of calling eval_commas on each of its items.
+    match data {
+        LustData::List(ref l) => {
+            if is_comma(l) {
+                // We know that we have at least one element because
+                // is_comma returned true.
+                eval_comma(&l[1..], env)
+            } else {
+                let mut res = Vec::with_capacity(l.len());
+                for d in l {
+                    res.push(eval_commas(d, env.clone())?);
+                }
+                Ok(LustData::List(res))
+            }
+        }
+        _ => Ok(data.clone()),
+    }
+}
+
+fn is_comma(data: &[LustData]) -> bool {
+    match data.first() {
+        Some(ref d) => {
+            if let Ok(s) = d.expect_symbol() {
+                s == "comma"
+            } else {
+                false
+            }
+        }
+        None => false,
+    }
+}
+
+fn eval_comma(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<LustData, String> {
+    check_arg_len("<comma builtin>", 1, args)?;
+    Ok(Interpreter::eval_in_env(&args[0], env)?)
+}
+
 /// Verifies that the function called NAME has received the expected
 /// number of arguments.
 fn check_arg_len(name: &str, expected: usize, args: &[LustData]) -> Result<(), String> {

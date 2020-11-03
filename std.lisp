@@ -4,11 +4,19 @@
 ;; to that.
 (set '#f ())
 
+;; Quoted versions of set and let using Lust's quaziquote syntax.
+(set 'setq (macro (symbol value) `(set ',symbol ,value)))
+(set 'letq (macro (symbol value) `(set ',symbol ,value)))
+
 ;; Folds a list of values with a function and accumulator.
 (set 'fold (fn (func list accum)
 	       (if (eq list ())
 		   accum
 		 (fold func (cdr list) (func accum (car list))))))
+
+;; Get's the length of a list
+(set 'len (fn (list)
+	      (fold (fn (a i) (add a 1)) list 0)))
 
 ;; Calculates the sum of a list.
 (set 'sum (fn (list)
@@ -99,7 +107,8 @@
 (set 'do (fn (& ops) (last ops)))
 
 ;; When COND is true executes and returns BODY's value.
-(set 'when (macro (cond body) (list 'if cond body ())))
+;; WARNING: I beleive that this is broken
+(set 'when (macro (cond body) (if (eval cond) (eval body) ())))
 
 ;; Much like Scheme's condition. Takes a list of pairs where the first
 ;; argument and the second is an expression to evaluate if the
@@ -109,6 +118,9 @@
 ;; terminal position. If no other pairs evaluate to true that arm will
 ;; run.
 (set 'cond (macro (& cases)
+     	   	  ;; Evaluate the chosen match arm as the return value
+     	   	  ;; of the cond expression.
+		  (eval
 		  (do
 		   (let 'arm-matches (fn (arm)
 					 (if (eval (car arm))
@@ -117,13 +129,27 @@
 		   (let 'is-else-arm (fn (arm)
 					 (eq (car arm) 'else)))
 		   (let 'find-match (fn (cases)
-					(if cases
+		   		    	(when cases
 					    (if (is-else-arm (car cases))
 						(if (cdr cases)
 						    (error '"else branch in non-terminal position")
 						  (car (cdr (car cases))))
 					      (if (arm-matches (car cases))
 						  (car (cdr (car cases)))
-						(find-match (cdr cases))))
-					  ())))
-		   (find-match cases))))
+						(find-match (cdr cases)))))))
+		   (find-match cases)))))
+
+;; Define special form with the same form as scheme's. Allows for
+;; defining functions and variables as follows:
+;;
+;;   lust> (define one 1)
+;;   => 1
+;;   lust> (define I (x) x)
+;;   => (fn (x) x)
+;;
+;; Demonstrates use of the quaziquote form, cond, and errors.
+(set 'define (macro (symbol & args)
+     	     (cond
+		((eq (len args) 1) `(setq ,symbol ,(car args)))
+		((eq (len args) 2) `(setq ,symbol ,`(fn ,(car args) ,(car (cdr args)))))
+		(else (error '"wrong number of arguments for define macro")))))
