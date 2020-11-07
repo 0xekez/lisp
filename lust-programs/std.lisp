@@ -6,7 +6,7 @@
 
 ;; Quoted versions of set and let using Lust's quaziquote syntax.
 (set 'setq (macro (symbol value) `(set ',symbol ,value)))
-(set 'letq (macro (symbol value) `(set ',symbol ,value)))
+(set 'letq (macro (symbol value) `(let ',symbol ,value)))
 
 ;; Folds a list of values with a function and accumulator.
 (set 'fold (fn (func list accum)
@@ -46,6 +46,13 @@
 		      #t
 		    #f)
 		#f)))
+;; Logical or of two arguments
+(set 'or (fn (a b)
+	     (if a
+		 #t
+	       (if b
+		   #t
+		 #f))))
 
 ;; Returns a list which is the result of calling OP on each item in
 ;; LIST.
@@ -108,7 +115,7 @@
 
 ;; When COND is true executes and returns BODY's value.
 ;; WARNING: I beleive that this is broken
-(setq when (macro (cond body) `(if ,cond ,body ()))
+(setq when (macro (cond body) `(if ,cond ,body ())))
 
 ;; Much like Scheme's condition. Takes a list of pairs where the first
 ;; argument and the second is an expression to evaluate if the
@@ -137,7 +144,7 @@
 					      (if (arm-matches (car cases))
 						  (car (cdr (car cases)))
 						(find-match (cdr cases)))))))
-		   (find-match cases)))))
+		   ((find-match cases))))))
 
 ;; `define` special form with the same form as scheme's. Allows for
 ;; defining functions and variables as follows:
@@ -153,3 +160,8 @@
 		((eq (len args) 1) `(setq ,symbol ,(car args)))
 		((eq (len args) 2) `(setq ,symbol ,`(fn ,(car args) ,(car (cdr args)))))
 		(else (error '"wrong number of arguments for define macro")))))
+
+(setq char (macro (c)
+      	   (if (eq (len c) 1)
+	       (car c)
+	     (error "can not convert to char"))))

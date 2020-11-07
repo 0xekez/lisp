@@ -3,7 +3,7 @@ use std::env;
 use lust::interpreter::Interpreter;
 
 fn show_usage() {
-    println!("usage: lust (-i)? <file>?");
+    println!("usage: lust <file>?");
 }
 
 fn main() {

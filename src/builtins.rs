@@ -53,10 +53,12 @@ pub fn cons(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, 
 pub fn if_(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("if", 3, args)?;
     let cond = Interpreter::eval_in_env(&args[0], env.clone())?;
+    let nenv = LustEnv::new();
+    nenv.borrow_mut().outer = Some(env);
     Ok(if truthy(&cond) {
-        CallResult::Call(env, args[1].clone())
+        CallResult::Call(nenv, args[1].clone())
     } else {
-        CallResult::Call(env, args[2].clone())
+        CallResult::Call(nenv, args[2].clone())
     })
 }
 
@@ -167,7 +169,7 @@ pub fn negate(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult
     check_arg_len("negate", 1, args)?;
     let val = Interpreter::eval_in_env(&args[0], env)?;
     let val = LustData::expect_num(&val)?;
-    Ok(CallResult::Ret(LustData::Number(val)))
+    Ok(CallResult::Ret(LustData::Number(-val)))
 }
 
 /// Takes two arguments and adds them together.

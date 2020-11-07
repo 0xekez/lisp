@@ -244,7 +244,7 @@ pub struct LustFn {
 
 pub struct LustEnv {
     pub data: HashMap<String, LustData>,
-    outer: Option<Rc<RefCell<LustEnv>>>,
+    pub outer: Option<Rc<RefCell<LustEnv>>>,
 }
 
 impl LustData {
