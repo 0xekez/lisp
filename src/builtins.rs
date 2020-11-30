@@ -12,6 +12,13 @@ pub fn quote(args: &[LustData], _env: Rc<RefCell<LustEnv>>) -> Result<CallResult
     Ok(CallResult::Ret(args[0].clone()))
 }
 
+/// Print the compiled bytecode for some LustData
+// pub fn dis(args: &[LustData], _env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
+//     check_arg_len("dis", 1, args)?;
+//     println!("{:?}", bytecode::compile(&args[0]));
+//     Ok(CallResult::Ret(LustData::get_empty_list()))
+// }
+
 /// Returns the first item in a list or () if the list is empty.
 pub fn car(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("car", 1, args)?;
@@ -53,12 +60,10 @@ pub fn cons(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, 
 pub fn if_(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("if", 3, args)?;
     let cond = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let nenv = LustEnv::new();
-    nenv.borrow_mut().outer = Some(env);
     Ok(if truthy(&cond) {
-        CallResult::Call(nenv, args[1].clone())
+        CallResult::Call(env, args[1].clone())
     } else {
-        CallResult::Call(nenv, args[2].clone())
+        CallResult::Call(env, args[2].clone())
     })
 }
 
@@ -98,26 +103,28 @@ pub fn let_(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, 
 /// called the additional argument will be bound to a list containing
 /// any remaining arguments after the first arguments have been bound
 /// to values.
-pub fn fn_(args: &[LustData], _env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
+pub fn fn_(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("fn", 2, args)?;
     let params = collect_param_list(&args[0])?;
     let body = args[1].clone();
     Ok(CallResult::Ret(LustData::Fn(Rc::new(LustFn {
         params,
         body,
+        env,
     }))))
 }
 
 /// Declares a macro. This has the same syntax and semantics as
 /// declaring a function but the evaluation rules are the same as Lisp
 /// macros.
-pub fn macro_(args: &[LustData], _env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
+pub fn macro_(args: &[LustData], env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("macro", 2, args)?;
     let params = collect_param_list(&args[0])?;
     let body = args[1].clone();
     Ok(CallResult::Ret(LustData::Mac(Rc::new(LustFn {
         params,
         body,
+        env,
     }))))
 }
 

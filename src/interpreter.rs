@@ -191,7 +191,7 @@ impl Interpreter {
                 fnenv.borrow_mut().data.insert(param.clone(), arg);
             }
 
-            fnenv.borrow_mut().outer = Some(env);
+            fnenv.borrow_mut().outer = Some(func.env.clone());
             Ok(CallResult::Call(fnenv, func.body.clone()))
         }
     }
@@ -215,6 +215,9 @@ impl Expr {
     }
 }
 
+// Thinking that List, Symbol, Fn, and Mac should be garbage
+// collected. Other things are fine to copy around.
+
 #[derive(Clone)]
 pub enum LustData {
     /// A floating point number
@@ -236,10 +239,11 @@ pub enum LustData {
     Mac(Rc<LustFn>),
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct LustFn {
     pub params: Vec<String>,
     pub body: LustData,
+    pub env: Rc<RefCell<LustEnv>>,
 }
 
 pub struct LustEnv {
@@ -396,8 +400,8 @@ impl PartialEq for LustData {
             (LustData::List(ref l), LustData::List(ref r)) => {
                 l.len() == r.len() && l.iter().zip(r.iter()).all(|(lhs, rhs)| lhs == rhs)
             }
-            (LustData::Fn(l), LustData::Fn(r)) => l == r,
-            (LustData::Mac(l), LustData::Mac(r)) => l == r,
+            // (LustData::Fn(l), LustData::Fn(r)) => l == r,
+            // (LustData::Mac(l), LustData::Mac(r)) => l == r,
             (LustData::Char(l), LustData::Char(r)) => l == r,
             (_, _) => false,
         }

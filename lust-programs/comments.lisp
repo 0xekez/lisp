@@ -4,8 +4,7 @@
 (import 'std)
 
 ;; A sample string
-(letq sample '";; This is a comment\n(fn (a) a)\n(fn (b) b)\n;;here's another comment\n; and another one!")
-
+(letq sample '";; Demo program showing how to extract lines that start with a comment\n;; from a Lust string.\n\n(import 'std)\n\n;; A sample string\n\n;; A function to pop a line from a STR.\n(letq pop-line (fn (str accum)\n\t\t   (do\n\t\t    (letq first (car str))\n\t\t    (if (or (eq first (car '\n)) (eq str ()))\n\t\t\t(cons accum (list (cdr str)))\n\t\t      (pop-line (cdr str) (append accum first))))))\n\n;; Takes a string STR and splits it into its lines.\n(letq split-lines (fn (str)\n\t\t      (do\n\t\t       (letq res (pop-line str ()))\n\t\t       (letq line (car res))\n\t\t       (letq rest (car (cdr res)))\n\t\t       (if rest\n\t\t\t   (cons line (split-lines rest))\n\t\t\t (list line)))))\n\n;; Returns true if LINE starts with \n(letq is-comment-line (fn (line)\n\t\t\t  (eq (car line) (car ))))\n\n;; Returns a list containing the elements in ITEMS that PRED returns\n;; true for.\n(letq filter (fn (items pred)\n\t\t (if items\n\t\t   (do\n\t\t    (letq first (car items))\n\t\t    (if (pred first)\n\t\t\t(cons first (filter (cdr items) pred))\n\t\t      (filter (cdr items) pred)))\n\t\t   ())))\n\n;; Gets all of the lines that begin with from STR.\n(letq get-comment-lines (fn (str)\n\t\t       (filter (split-lines str) is-comment-line)))\n\n; Print the result\n(println (get-comment-lines sample))\n")
 ;; A function to pop a line from a STR.
 (letq pop-line (fn (str accum)
 		   (do
@@ -28,20 +27,9 @@
 (letq is-comment-line (fn (line)
 			  (eq (car line) (car '";"))))
 
-;; Returns a list containing the elements in ITEMS that PRED returns
-;; true for.
-(letq filter (fn (items pred)
-		 (if items
-		   (do
-		    (letq first (car items))
-		    (if (pred first)
-			(cons first (filter (cdr items) pred))
-		      (filter (cdr items) pred)))
-		   ())))
-
 ;; Gets all of the lines that begin with ';' from STR.
 (letq get-comment-lines (fn (str)
 		       (filter (split-lines str) is-comment-line)))
 
 ; Print the result
-(println (get-comment-lines sample))
+(get-comment-lines sample)
