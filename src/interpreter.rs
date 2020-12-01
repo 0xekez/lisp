@@ -56,11 +56,13 @@ impl Interpreter {
         // The current enviroment we're evaluating in.
         let currentenv = env;
         let currexpr = Self::macroexpand(expr.clone(), currentenv.clone())?;
-        Self::eval_without_expansion(currexpr, currentenv)
+
+        Self::eval_expanded(currexpr, currentenv)
     }
 
-    /// Evaluates an expression witout performing macro expansion.
-    fn eval_without_expansion(
+    /// Evaluates an expanded expression. Expanded meaning that
+    /// macroexpand has already been called on it.
+    fn eval_expanded(
         mut currexpr: LustData,
         mut currentenv: Rc<RefCell<LustEnv>>,
     ) -> Result<LustData, String> {
@@ -82,7 +84,9 @@ impl Interpreter {
                         // ones.
                         CallResult::Call(env, expr) => {
                             currentenv = env;
-                            currexpr = expr;
+                            // Need to expand if the new expression is
+                            // a macro
+                            currexpr = Self::macroexpand(expr, currentenv.clone())?;
                         }
                     }
                 }
@@ -123,7 +127,7 @@ impl Interpreter {
             if !Self::is_macro_call(&ast, env.clone()) {
                 break Ok(ast);
             }
-            ast = Self::eval_without_expansion(ast, env.clone())?;
+            ast = Self::eval_expanded(ast, env.clone())?;
         }
     }
 
@@ -175,8 +179,8 @@ impl Interpreter {
                         LustData::List(LustVec::new())
                     } else {
                         let mut res = LustVec::with_len(args.len() - i);
-                        for i in i..args.len() {
-                            let e = &args[i];
+                        for j in i..args.len() {
+                            let e = &args[j];
                             let arg = if eval_args {
                                 Self::eval_in_env(e, env.clone())?
                             } else {
@@ -185,8 +189,8 @@ impl Interpreter {
                             // Honestly not totally sure why we have
                             // to install backwards here but works for
                             // me.
-                            let len = res.len();
-                            res[len - 1 - i] = arg;
+                            let index = res.len() - 1 - (j - i);
+                            res[index] = arg;
                         }
                         LustData::List(res)
                     };
