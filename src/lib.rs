@@ -1,9 +1,10 @@
 pub mod builtins;
-pub mod bytecode;
+// pub mod bytecode;
 pub mod errors;
 pub mod interpreter;
-pub mod jit;
+// pub mod jit;
 pub mod location;
+pub mod lustvec;
 pub mod parser;
 pub mod reader;
 pub mod symboltable;

@@ -266,6 +266,7 @@ dependencies = [
  "cranelift",
  "cranelift-module",
  "cranelift-simplejit",
+ "rev_slice",
  "rustyline",
 ]
 
@@ -363,6 +364,12 @@ dependencies = [
  "mach",
  "winapi",
 ]
+
+[[package]]
+name = "rev_slice"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ed802e95a56a9f0cbc3687c0baf84bb0aa9c3af2fae758add8a07bbbc4e3954"
 
 [[package]]
 name = "rustc-hash"

@@ -1,5 +1,7 @@
 use crate::builtins;
+use crate::lustvec::LustVec;
 use crate::parser::{Expr, ExprVal};
+use rev_slice::RevSlice;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -126,12 +128,15 @@ impl Interpreter {
     }
 
     /// Evaluates a list.
-    fn eval_list(list: &Vec<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
+    fn eval_list(
+        list: &LustVec<LustData>,
+        env: Rc<RefCell<LustEnv>>,
+    ) -> Result<CallResult, String> {
         let pred = Self::eval_in_env(list.first().unwrap(), env.clone())?;
         match pred {
-            LustData::Builtin(ref f) => f(&list[1..], env),
-            LustData::Fn(ref lf) => Self::eval_funcall(lf, &list[1..], env, true),
-            LustData::Mac(ref lm) => Self::eval_funcall(lm, &list[1..], env, false),
+            LustData::Builtin(ref f) => f(list.remove_first_view(), env),
+            LustData::Fn(ref lf) => Self::eval_funcall(lf, list.remove_first_view(), env, true),
+            LustData::Mac(ref lm) => Self::eval_funcall(lm, list.remove_first_view(), env, false),
             _ => Err(format!("invalid list predicate: {}", pred)),
         }
     }
@@ -140,7 +145,7 @@ impl Interpreter {
     /// installing its arguments in the enviroment.
     fn eval_funcall(
         func: &LustFn,
-        args: &[LustData],
+        args: &RevSlice<LustData>,
         env: Rc<RefCell<LustEnv>>,
         eval_args: bool,
     ) -> Result<CallResult, String> {
@@ -167,16 +172,21 @@ impl Interpreter {
                 if param == "&" {
                     let bind = func.params[i + 1].clone();
                     let val = if i >= args.len() {
-                        LustData::List(vec![])
+                        LustData::List(LustVec::new())
                     } else {
-                        let mut res = Vec::with_capacity(args.len() - i);
-                        for e in &args[i..] {
+                        let mut res = LustVec::with_len(args.len() - i);
+                        for i in i..args.len() {
+                            let e = &args[i];
                             let arg = if eval_args {
                                 Self::eval_in_env(e, env.clone())?
                             } else {
                                 e.clone()
                             };
-                            res.push(arg);
+                            // Honestly not totally sure why we have
+                            // to install backwards here but works for
+                            // me.
+                            let len = res.len();
+                            res[len - 1 - i] = arg;
                         }
                         LustData::List(res)
                     };
@@ -191,7 +201,7 @@ impl Interpreter {
                 fnenv.borrow_mut().data.insert(param.clone(), arg);
             }
 
-            fnenv.borrow_mut().outer = Some(func.env.clone());
+            fnenv.borrow_mut().outer = Some(env);
             Ok(CallResult::Call(fnenv, func.body.clone()))
         }
     }
@@ -202,10 +212,10 @@ impl Expr {
         match &self.val {
             ExprVal::Number(f) => Ok(LustData::Number(*f)),
             ExprVal::List(ref v) => {
-                let mut res = Vec::with_capacity(v.len());
-                for e in v {
+                let mut res = LustVec::with_capacity(v.len());
+                for e in v.iter().rev() {
                     let data = e.to_data()?;
-                    res.push(data);
+                    res.push_front(data);
                 }
                 Ok(LustData::List(res))
             }
@@ -223,20 +233,26 @@ pub enum LustData {
     /// A floating point number
     Number(f32),
     /// A list.
-    List(Vec<LustData>),
+    List(LustVec<LustData>),
     /// A symbol. Used to represent IDs and files in import
     /// expressions.
     Symbol(String),
     /// A character. The building block of a string.
     Char(char),
     /// A builtin function.
-    Builtin(fn(&[LustData], Rc<RefCell<LustEnv>>) -> Result<CallResult, String>),
+    Builtin(fn(&RevSlice<LustData>, Rc<RefCell<LustEnv>>) -> Result<CallResult, String>),
     /// A user defined function.
     Fn(Rc<LustFn>),
     /// A user defined macro. Macros differ from functions in that
     /// their arguments are implicitly quoted and that they are
     /// evlauted at compile time.
     Mac(Rc<LustFn>),
+}
+
+impl Default for LustData {
+    fn default() -> Self {
+        LustData::Number(0.0)
+    }
 }
 
 #[derive(Clone)]
@@ -253,12 +269,15 @@ pub struct LustEnv {
 
 impl LustData {
     pub fn from_string(s: &str) -> LustData {
-        let v = s.chars().map(|c| LustData::Char(c)).collect();
-        LustData::List(v)
+        let mut res = LustVec::with_capacity(s.len());
+        for c in s.chars().rev() {
+            res.push_front(LustData::Char(c))
+        }
+        LustData::List(res)
     }
 
     /// Extracts a list from some data or returns an error.
-    pub fn expect_list<'a>(&'a self) -> Result<&'a Vec<LustData>, String> {
+    pub fn expect_list<'a>(&'a self) -> Result<&'a LustVec<LustData>, String> {
         match self {
             LustData::List(ref v) => Ok(v),
             _ => Err(format!("expected list, got {}", self)),
@@ -290,7 +309,7 @@ impl LustData {
 
     /// Gets an empty list.
     pub fn get_empty_list() -> LustData {
-        LustData::List(vec![])
+        LustData::List(LustVec::new())
     }
 
     pub fn stringify(&self) -> Option<String> {
@@ -300,7 +319,7 @@ impl LustData {
                     return None;
                 }
                 let mut res = String::with_capacity(l.len());
-                for d in l {
+                for d in l.iter() {
                     let c = match d.expect_char() {
                         Ok(c) => c,
                         Err(_) => return None,
@@ -336,7 +355,7 @@ impl LustEnv {
     fn install_builtin(
         &mut self,
         name: &str,
-        func: fn(&[LustData], Rc<RefCell<LustEnv>>) -> Result<CallResult, String>,
+        func: fn(&RevSlice<LustData>, Rc<RefCell<LustEnv>>) -> Result<CallResult, String>,
     ) {
         self.data.insert(name.to_string(), LustData::Builtin(func));
     }
@@ -421,12 +440,12 @@ impl fmt::Display for LustData {
                 Self::Char(c) => write!(f, "'{}'", c),
 
                 Self::List(l) => {
-                    if l.is_empty() {
+                    if l.len() == 0 {
                         return write!(f, "()");
                     }
                     write!(f, "(")?;
-                    for e in &l[..(l.len() - 1)] {
-                        write!(f, "{} ", e)?;
+                    for i in 0..(l.len() - 1) {
+                        write!(f, "{} ", l[i])?;
                     }
                     write!(f, "{})", l[l.len() - 1])
                 }

@@ -117,6 +117,17 @@
 ;; WARNING: I beleive that this is broken
 (setq when (macro (cond body) `(if ,cond ,body ())))
 
+;; Returns a list containing the elements in ITEMS that PRED returns
+;; true for.
+(letq filter (fn (items pred)
+		 (if items
+		   (do
+		    (letq first (car items))
+		    (if (pred first)
+			(cons first (filter (cdr items) pred))
+		      (filter (cdr items) pred)))
+		   ())))
+
 ;; Much like Scheme's condition. Takes a list of pairs where the first
 ;; argument and the second is an expression to evaluate if the
 ;; argument is true. Iterates over that list and return's the body of
