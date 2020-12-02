@@ -1,12 +1,29 @@
 // Builtin functions for Lust.
 
+use crate::bytecode::Executor;
 use crate::lustvec::LustVec;
+
 use rev_slice::RevSlice;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::interpreter::{CallResult, Interpreter, LustData, LustEnv, LustFn};
+
+pub fn dis(args: &RevSlice<LustData>, _env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
+    check_arg_len("dis", 1, args)?;
+    match Executor::compile(&args[0]) {
+        Ok(d) => {
+            for inst in d {
+                println!("{}", inst);
+            }
+        }
+        Err(e) => {
+            println!("{}", e);
+        }
+    }
+    Ok(CallResult::Ret(LustData::get_empty_list()))
+}
 
 /// Quotes its argument. The result of evaluating a quoted argument is
 /// the argument.
@@ -143,6 +160,10 @@ pub fn error(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<Cal
     Err(format!("{}", message))
 }
 
+fn strip_quotes(s: &String) -> &str {
+    s.trim_end_matches("\"").trim_start_matches("\"")
+}
+
 /// Takes on argument and prints it to stdout followed by a newline.
 pub fn println_(
     args: &RevSlice<LustData>,
@@ -150,7 +171,16 @@ pub fn println_(
 ) -> Result<CallResult, String> {
     check_arg_len("println", 1, args)?;
     let val = Interpreter::eval_in_env(&args[0], env)?;
-    println!("{}", val);
+    let stringify = format!("{}", val);
+    println!("{}", strip_quotes(&stringify));
+    Ok(CallResult::Ret(LustData::get_empty_list()))
+}
+
+pub fn print_(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
+    check_arg_len("print", 1, args)?;
+    let val = Interpreter::eval_in_env(&args[0], env)?;
+    let stringify = format!("{}", val);
+    print!("{}", strip_quotes(&stringify));
     Ok(CallResult::Ret(LustData::get_empty_list()))
 }
 

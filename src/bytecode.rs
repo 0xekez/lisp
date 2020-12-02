@@ -1,78 +1,79 @@
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::fmt;
 
 use crate::interpreter::LustData;
 
 pub enum Inst {
-    PushConst(Data),
+    PushConst(LustData),
     StoreLocal(String),
-    GetLocal(String),
+    GetSym(String),
+    Call,
     Puts,
     Exit,
 }
 
-pub struct Function {
+pub struct Func {
+    params: Vec<String>,
     body: Vec<Inst>,
-    args: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
 pub enum Data {
+    Func(Box<Func>),
+    List(Vec<Data>),
     Num(f32),
     Char(char),
-    List(Rc<Vec<Data>>),
+    Symbol(String),
 }
 
-// List of enviroments in the order that we've seen them. When an
-// enviroment is entered it is pushed to the front of the list, when
-// it is done it is removed. If a function depends on the map it will
-// be moved into the function.
-
 pub struct Executor {
-    stack: Vec<Data>,
-    env: HashMap<String, Data>,
+    stack: Vec<LustData>,
 }
 
 impl Executor {
     pub fn new() -> Self {
-        Self {
-            stack: Vec::new(),
-            env: HashMap::new(),
-        }
+        Self { stack: Vec::new() }
     }
 
-    pub fn execute(&mut self, instructions: Vec<Inst>) -> Result<(), String> {
-        let mut pc: usize = 0;
-        loop {
-            let inst = &instructions[pc];
-            match inst {
-                Inst::PushConst(data) => self.stack.push(data.clone()),
-                Inst::StoreLocal(s) => {
-                    self.env.insert(
-                        s.clone(),
-                        self.stack.pop().ok_or("empty stack".to_string())?,
-                    );
+    pub fn compile(data: &LustData) -> Result<Vec<Inst>, String> {
+        match data {
+            LustData::Symbol(s) => Ok(vec![Inst::GetSym(s.clone())]),
+            LustData::List(l) => {
+                let mut res = Vec::new();
+                for item in l.iter().rev() {
+                    res.extend(Self::compile(item)?);
                 }
-                Inst::GetLocal(s) => self.stack.push(
-                    self.env
-                        .get(s)
-                        .ok_or(format!("undefined symbol: {}", s))?
-                        .clone(),
-                ),
-                Inst::Puts => println!("{:#?}", self.stack.pop().ok_or("empty stack".to_string())?),
-                Inst::Exit => break,
+                res.push(Inst::Call);
+                return Ok(res);
             }
-            pc += 1;
+            LustData::Number(_) => Ok(vec![Inst::PushConst(data.clone())]),
+            LustData::Char(_) => Ok(vec![Inst::PushConst(data.clone())]),
+            LustData::Builtin(_) => Ok(vec![Inst::PushConst(data.clone())]),
+            LustData::Fn(_) => Ok(vec![Inst::PushConst(data.clone())]),
+            LustData::Mac(_) => Ok(vec![Inst::PushConst(data.clone())]),
         }
-        Ok(())
     }
 }
 
-impl Data {
-    fn expect_list(&self) -> Result<Rc<Vec<Self>>, String> {
+impl fmt::Display for Inst {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::List(l) => Ok(l.clone()),
-            _ => Err(format!("expected list, got {:#?}", self)),
+            Inst::PushConst(d) => {
+                write!(f, "PUSH_CONST {}", d)
+            }
+            Inst::StoreLocal(s) => {
+                write!(f, "STORE_LOCAL {}", s)
+            }
+            Inst::GetSym(s) => {
+                write!(f, "GET_LOCAL {}", s)
+            }
+            Inst::Puts => {
+                write!(f, "PUTS")
+            }
+            Inst::Exit => {
+                write!(f, "EXIT")
+            }
+            Inst::Call => {
+                write!(f, "CALL")
+            }
         }
     }
 }

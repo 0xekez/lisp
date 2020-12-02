@@ -370,6 +370,7 @@ impl LustEnv {
             outer: None,
         };
 
+        me.install_builtin("dis", builtins::dis);
         me.install_builtin("quote", builtins::quote);
         me.install_builtin("quaziquote", builtins::quaziquote);
         me.install_builtin("car", builtins::car);
@@ -384,6 +385,7 @@ impl LustEnv {
         me.install_builtin("macro", builtins::macro_);
         me.install_builtin("macroexpand", builtins::macroexpand);
         me.install_builtin("println", builtins::println_);
+        me.install_builtin("print", builtins::print_);
         me.install_builtin("import", builtins::import);
         me.install_builtin("negate", builtins::negate);
         me.install_builtin("add", builtins::add);
