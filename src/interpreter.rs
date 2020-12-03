@@ -319,6 +319,9 @@ impl LustData {
         match self {
             LustData::List(l) => {
                 let res = Rc::new(RefCell::new(LustVec::with_capacity(l.borrow().len())));
+                if l.borrow().mutable {
+                    res.borrow_mut().mutable = true;
+                }
                 for e in l.borrow().iter().rev() {
                     res.borrow_mut().push_front(e.deep_clone());
                 }
@@ -336,10 +339,18 @@ impl LustData {
             }
         }
     }
+    pub fn make_mutable(&self) {
+        if let LustData::List(l) = self {
+            l.borrow_mut().mutable = true;
+            for expr in l.borrow().iter() {
+                expr.make_mutable();
+            }
+        }
+    }
 
     pub fn is_imutable(&self) -> bool {
         if let LustData::List(l) = self {
-            l.borrow().mutable
+            !l.borrow().mutable
         } else {
             false
         }

@@ -64,7 +64,9 @@ pub fn cons(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<Call
     let prepend = Interpreter::eval_in_env(&args[0], env.clone())?;
     let expr = Interpreter::eval_in_env(&args[1], env)?;
     let expr = if expr.is_imutable() {
-        expr.deep_clone()
+        let new = expr.deep_clone();
+        new.make_mutable();
+        new
     } else {
         expr
     };
@@ -131,7 +133,8 @@ pub fn fn_(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallR
 pub fn macro_(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("macro", 2, args)?;
     let params = collect_param_list(&args[0])?;
-    let body = args[1].clone();
+    let body = args[1].deep_clone();
+    body.make_imutable();
     Ok(CallResult::Ret(LustData::Mac(Box::new(LustFn {
         params,
         body,
