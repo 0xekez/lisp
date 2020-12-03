@@ -37,10 +37,11 @@ pub fn car(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallR
     check_arg_len("car", 1, args)?;
     let expr = Interpreter::eval_in_env(&args[0], env)?;
     let l = LustData::expect_list(&expr)?;
-    Ok(CallResult::Ret(match l.first().take() {
+    let res = Ok(CallResult::Ret(match l.borrow().first().take() {
         Some(d) => d.clone(),
         None => LustData::get_empty_list(),
-    }))
+    }));
+    res
 }
 
 /// Takes a list and returns a new list containing all but the first
@@ -49,10 +50,11 @@ pub fn cdr(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallR
     check_arg_len("cdr", 1, args)?;
     let expr = Interpreter::eval_in_env(&args[0], env)?;
     let l = LustData::expect_list(&expr)?;
-    Ok(CallResult::Ret(match l.split_first() {
-        Some((_, rest)) => LustData::List(LustVec::from_slice(rest)),
+    let res = Ok(CallResult::Ret(match l.borrow().split_first() {
+        Some((_, rest)) => LustData::List(Rc::new(RefCell::new(LustVec::from_slice(rest)))),
         None => LustData::get_empty_list(),
-    }))
+    }));
+    res
 }
 
 /// Prepends its first argument to its second argument where the
@@ -61,9 +63,14 @@ pub fn cons(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<Call
     check_arg_len("cons", 2, args)?;
     let prepend = Interpreter::eval_in_env(&args[0], env.clone())?;
     let expr = Interpreter::eval_in_env(&args[1], env)?;
+    let expr = if expr.is_imutable() {
+        expr.deep_clone()
+    } else {
+        expr
+    };
     let l = LustData::expect_list(&expr)?;
-    let mut ret = l.clone();
-    ret.push_front(prepend);
+    let ret = l.clone();
+    ret.borrow_mut().push_front(prepend);
     Ok(CallResult::Ret(LustData::List(ret)))
 }
 
@@ -87,17 +94,6 @@ pub fn eval(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<Call
     Ok(CallResult::Ret(Interpreter::eval_in_env(&arg, env)?))
 }
 
-/// Takes two arguments TARGET and VALUE. Evaluates target and then
-/// assigns VAUE to that symbol in the global enviroment.
-pub fn set(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
-    check_arg_len("set", 2, args)?;
-    let target = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let target = LustData::expect_symbol(&target)?;
-    let val = Interpreter::eval_in_env(&args[1], env.clone())?;
-    env.borrow_mut().set_global(target.clone(), &val);
-    Ok(CallResult::Ret(val))
-}
-
 /// Same as set above but binds the value in the local enviroment.
 pub fn let_(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("let", 2, args)?;
@@ -119,8 +115,10 @@ pub fn let_(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<Call
 pub fn fn_(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("fn", 2, args)?;
     let params = collect_param_list(&args[0])?;
-    let body = args[1].clone();
-    Ok(CallResult::Ret(LustData::Fn(Rc::new(LustFn {
+    // Function bodies shouldn't be modified after creation.
+    let body = args[1].deep_clone();
+    body.make_imutable();
+    Ok(CallResult::Ret(LustData::Fn(Box::new(LustFn {
         params,
         body,
         env,
@@ -134,7 +132,7 @@ pub fn macro_(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<Ca
     check_arg_len("macro", 2, args)?;
     let params = collect_param_list(&args[0])?;
     let body = args[1].clone();
-    Ok(CallResult::Ret(LustData::Mac(Rc::new(LustFn {
+    Ok(CallResult::Ret(LustData::Mac(Box::new(LustFn {
         params,
         body,
         env,
@@ -284,9 +282,9 @@ pub fn quaziquote(
 ) -> Result<CallResult, String> {
     check_arg_len("quaziquote", 1, args)?;
     let l = args[0].expect_list()?;
-    let mut res = LustVec::with_capacity(l.len());
-    for item in l.iter().rev() {
-        res.push_front(eval_commas(item, env.clone())?);
+    let res = Rc::new(RefCell::new(LustVec::with_capacity(l.borrow().len())));
+    for item in l.borrow().iter().rev() {
+        res.borrow_mut().push_front(eval_commas(item, env.clone())?);
     }
     Ok(CallResult::Ret(LustData::List(res)))
 }
@@ -297,14 +295,14 @@ fn eval_commas(data: &LustData, env: Rc<RefCell<LustEnv>>) -> Result<LustData, S
     // is the result of calling eval_commas on each of its items.
     match data {
         LustData::List(ref l) => {
-            if is_comma(l) {
+            if is_comma(&l.borrow()) {
                 // We know that we have at least one element because
                 // is_comma returned true.
-                eval_comma(l, env)
+                eval_comma(&l.borrow(), env)
             } else {
-                let mut res = LustVec::with_capacity(l.len());
-                for d in l.iter().rev() {
-                    res.push_front(eval_commas(d, env.clone())?);
+                let res = Rc::new(RefCell::new(LustVec::with_capacity(l.borrow().len())));
+                for d in l.borrow().iter().rev() {
+                    res.borrow_mut().push_front(eval_commas(d, env.clone())?);
                 }
                 Ok(LustData::List(res))
             }
@@ -351,7 +349,7 @@ fn check_arg_len(name: &str, expected: usize, args: &RevSlice<LustData>) -> Resu
 /// Get's the Lust truthy equivalent to Rust boolean value.
 fn get_truthy_equiv(cond: bool) -> LustData {
     if cond {
-        LustData::Symbol("#t".to_string())
+        LustData::Symbol(Box::new("#t".to_string()))
     } else {
         LustData::get_empty_list()
     }
@@ -360,12 +358,12 @@ fn get_truthy_equiv(cond: bool) -> LustData {
 /// Collects a list of function paramaters or errors.
 fn collect_param_list(expr: &LustData) -> Result<Vec<String>, String> {
     let v = LustData::expect_list(expr)?;
-    let mut res = Vec::with_capacity(v.len());
-    for (i, e) in v.iter().enumerate() {
+    let mut res = Vec::with_capacity(v.borrow().len());
+    for (i, e) in v.borrow().iter().enumerate() {
         let name = LustData::expect_symbol(e)?;
         res.push(name.clone());
         if name == "&" {
-            if i + 2 != v.len() {
+            if i + 2 != v.borrow().len() {
                 return Err(
                     "invalid varadic function. & symbol must occur before last argument"
                         .to_string(),
@@ -379,7 +377,7 @@ fn collect_param_list(expr: &LustData) -> Result<Vec<String>, String> {
 /// Converts some data to a Rust boolean.
 fn truthy(expr: &LustData) -> bool {
     match LustData::expect_list(expr) {
-        Ok(ref v) => !(v.len() == 0),
+        Ok(ref v) => !(v.borrow().len() == 0),
         Err(_) => true,
     }
 }

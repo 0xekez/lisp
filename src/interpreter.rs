@@ -3,7 +3,6 @@ use crate::lustvec::LustVec;
 use crate::parser::{Expr, ExprVal};
 use rev_slice::RevSlice;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -71,10 +70,10 @@ impl Interpreter {
                 LustData::Symbol(ref s) => break currentenv.borrow().resolve(s),
                 LustData::List(ref v) => {
                     // Empty list does not result in function call.
-                    if v.len() == 0 {
+                    if v.borrow().len() == 0 {
                         break Ok(currexpr);
                     }
-                    let fnres = Self::eval_list(v, currentenv)?;
+                    let fnres = Self::eval_list(&v.borrow(), currentenv)?;
                     match fnres {
                         CallResult::Ret(v) => break Ok(v),
                         // If this is a call of a user-defined
@@ -98,10 +97,10 @@ impl Interpreter {
     /// Determines if an expression is a call to a macro.
     fn is_macro_call(ast: &LustData, env: Rc<RefCell<LustEnv>>) -> bool {
         if let LustData::List(ast) = ast {
-            if ast.len() == 0 {
+            if ast.borrow().len() == 0 {
                 return false;
             }
-            let pred = &ast[0];
+            let pred = &ast.borrow()[0];
             match pred {
                 LustData::Symbol(ref s) => match env.borrow().resolve(s) {
                     Ok(data) => {
@@ -176,9 +175,9 @@ impl Interpreter {
                 if param == "&" {
                     let bind = func.params[i + 1].clone();
                     let val = if i >= args.len() {
-                        LustData::List(LustVec::new())
+                        LustData::get_empty_list()
                     } else {
-                        let mut res = LustVec::with_len(args.len() - i);
+                        let res = Rc::new(RefCell::new(LustVec::with_len(args.len() - i)));
                         for j in i..args.len() {
                             let e = &args[j];
                             let arg = if eval_args {
@@ -189,12 +188,12 @@ impl Interpreter {
                             // Honestly not totally sure why we have
                             // to install backwards here but works for
                             // me.
-                            let index = res.len() - 1 - (j - i);
-                            res[index] = arg;
+                            let index = res.borrow().len() - 1 - (j - i);
+                            (&mut res.borrow_mut())[index] = arg;
                         }
                         LustData::List(res)
                     };
-                    fnenv.borrow_mut().data.insert(bind, val);
+                    fnenv.borrow_mut().insert(bind, val);
                     break;
                 }
                 let arg = if eval_args {
@@ -202,7 +201,7 @@ impl Interpreter {
                 } else {
                     args[i].clone()
                 };
-                fnenv.borrow_mut().data.insert(param.clone(), arg);
+                fnenv.borrow_mut().insert(param.clone(), arg);
             }
 
             fnenv.borrow_mut().outer = Some(func.env.clone());
@@ -216,15 +215,15 @@ impl Expr {
         match &self.val {
             ExprVal::Number(f) => Ok(LustData::Number(*f)),
             ExprVal::List(ref v) => {
-                let mut res = LustVec::with_capacity(v.len());
+                let res = Rc::new(RefCell::new(LustVec::with_capacity(v.len())));
                 for e in v.iter().rev() {
                     let data = e.to_data()?;
-                    res.push_front(data);
+                    res.borrow_mut().push_front(data);
                 }
                 Ok(LustData::List(res))
             }
             ExprVal::String(s) => Ok(LustData::from_string(s)),
-            ExprVal::Id(s) => Ok(LustData::Symbol(s.clone())),
+            ExprVal::Id(s) => Ok(LustData::Symbol(Box::new(s.clone()))),
         }
     }
 }
@@ -237,20 +236,20 @@ pub enum LustData {
     /// A floating point number
     Number(f32),
     /// A list.
-    List(LustVec<LustData>),
+    List(Rc<RefCell<LustVec<LustData>>>),
     /// A symbol. Used to represent IDs and files in import
     /// expressions.
-    Symbol(String),
+    Symbol(Box<String>),
     /// A character. The building block of a string.
     Char(char),
     /// A builtin function.
     Builtin(fn(&RevSlice<LustData>, Rc<RefCell<LustEnv>>) -> Result<CallResult, String>),
     /// A user defined function.
-    Fn(Rc<LustFn>),
+    Fn(Box<LustFn>),
     /// A user defined macro. Macros differ from functions in that
     /// their arguments are implicitly quoted and that they are
     /// evlauted at compile time.
-    Mac(Rc<LustFn>),
+    Mac(Box<LustFn>),
 }
 
 impl Default for LustData {
@@ -267,23 +266,23 @@ pub struct LustFn {
 }
 
 pub struct LustEnv {
-    data: HashMap<String, LustData>,
+    data: Vec<(String, LustData)>,
     outer: Option<Rc<RefCell<LustEnv>>>,
 }
 
 impl LustData {
     pub fn from_string(s: &str) -> LustData {
-        let mut res = LustVec::with_capacity(s.len());
+        let res = Rc::new(RefCell::new(LustVec::with_capacity(s.len())));
         for c in s.chars().rev() {
-            res.push_front(LustData::Char(c))
+            res.borrow_mut().push_front(LustData::Char(c))
         }
         LustData::List(res)
     }
 
     /// Extracts a list from some data or returns an error.
-    pub fn expect_list<'a>(&'a self) -> Result<&'a LustVec<LustData>, String> {
+    pub fn expect_list(&self) -> Result<Rc<RefCell<LustVec<LustData>>>, String> {
         match self {
-            LustData::List(ref v) => Ok(v),
+            LustData::List(ref v) => Ok(v.clone()),
             _ => Err(format!("expected list, got {}", self)),
         }
     }
@@ -313,17 +312,47 @@ impl LustData {
 
     /// Gets an empty list.
     pub fn get_empty_list() -> LustData {
-        LustData::List(LustVec::new())
+        LustData::List(Rc::new(RefCell::new(LustVec::new())))
+    }
+
+    pub fn deep_clone(&self) -> LustData {
+        match self {
+            LustData::List(l) => {
+                let res = Rc::new(RefCell::new(LustVec::with_capacity(l.borrow().len())));
+                for e in l.borrow().iter().rev() {
+                    res.borrow_mut().push_front(e.deep_clone());
+                }
+                LustData::List(res)
+            }
+            _ => self.clone(),
+        }
+    }
+
+    pub fn make_imutable(&self) {
+        if let LustData::List(l) = self {
+            l.borrow_mut().mutable = false;
+            for expr in l.borrow().iter() {
+                expr.make_imutable();
+            }
+        }
+    }
+
+    pub fn is_imutable(&self) -> bool {
+        if let LustData::List(l) = self {
+            l.borrow().mutable
+        } else {
+            false
+        }
     }
 
     pub fn stringify(&self) -> Option<String> {
         match self {
             LustData::List(l) => {
-                if l.len() == 0 {
+                if l.borrow().len() == 0 {
                     return None;
                 }
-                let mut res = String::with_capacity(l.len());
-                for d in l.iter() {
+                let mut res = String::with_capacity(l.borrow().len());
+                for d in l.borrow().iter() {
                     let c = match d.expect_char() {
                         Ok(c) => c,
                         Err(_) => return None,
@@ -339,7 +368,7 @@ impl LustData {
 
 impl LustFn {
     pub fn get_min_param_count(&self) -> usize {
-        if self.params.iter().any(|i| *i == "&") {
+        if self.is_varadic() {
             self.params.len() - 2
         } else {
             self.params.len()
@@ -347,7 +376,7 @@ impl LustFn {
     }
 
     pub fn is_varadic(&self) -> bool {
-        self.params.iter().any(|i| *i == "&")
+        self.params.iter().rev().any(|i| *i == "&")
     }
 }
 
@@ -361,12 +390,12 @@ impl LustEnv {
         name: &str,
         func: fn(&RevSlice<LustData>, Rc<RefCell<LustEnv>>) -> Result<CallResult, String>,
     ) {
-        self.data.insert(name.to_string(), LustData::Builtin(func));
+        self.data.push((name.to_string(), LustData::Builtin(func)));
     }
 
     fn new_with_defaults() -> Self {
         let mut me = Self {
-            data: HashMap::new(),
+            data: Vec::new(),
             outer: None,
         };
 
@@ -378,7 +407,6 @@ impl LustEnv {
         me.install_builtin("cons", builtins::cons);
         me.install_builtin("if", builtins::if_);
         me.install_builtin("eval", builtins::eval);
-        me.install_builtin("set", builtins::set);
         me.install_builtin("let", builtins::let_);
         me.install_builtin("fn", builtins::fn_);
         me.install_builtin("error", builtins::error);
@@ -399,9 +427,18 @@ impl LustEnv {
         me
     }
 
+    // These functions don't remove old definitions from the
+    // enviroment if a symbol is redefined. Instead, symbols are added
+    // to the back of the enviroment and when resolving something we
+    // resolve back to front.
+    //
+    // This is all based on the assumption that most enviroments are
+    // small and short lived so we're best off keeping overhead for
+    // their creation as small as possible.
+
     pub fn resolve(&self, id: &str) -> Result<LustData, String> {
-        match self.data.get(id) {
-            Some(data) => Ok(data.clone()),
+        match self.data.iter().rev().find(|x| x.0 == id) {
+            Some(data) => Ok(data.1.clone()),
             None => match self.outer {
                 Some(ref outer) => outer.borrow().resolve(id),
                 None => Err(format!("failed to resolve identifier {}", id)),
@@ -410,18 +447,11 @@ impl LustEnv {
     }
 
     pub fn insert(&mut self, id: String, val: LustData) {
-        self.data.insert(id, val.clone());
+        self.data.push((id, val.clone()));
     }
 
     pub fn extend(&mut self, other: &Self) {
         self.data.extend(other.data.clone())
-    }
-
-    pub fn set_global(&mut self, id: String, val: &LustData) -> Option<LustData> {
-        match self.outer {
-            Some(ref outer) => outer.borrow_mut().set_global(id, val),
-            None => self.data.insert(id, val.clone()),
-        }
     }
 }
 
@@ -431,7 +461,11 @@ impl PartialEq for LustData {
             (LustData::Number(l), LustData::Number(r)) => l == r,
             (LustData::Symbol(ref l), LustData::Symbol(ref r)) => l == r,
             (LustData::List(ref l), LustData::List(ref r)) => {
-                l.len() == r.len() && l.iter().zip(r.iter()).all(|(lhs, rhs)| lhs == rhs)
+                l.borrow().len() == r.borrow().len()
+                    && l.borrow()
+                        .iter()
+                        .zip(r.borrow().iter())
+                        .all(|(lhs, rhs)| lhs == rhs)
             }
             (LustData::Char(l), LustData::Char(r)) => l == r,
             (_, _) => false,
@@ -452,14 +486,14 @@ impl fmt::Display for LustData {
                 Self::Char(c) => write!(f, "'{}'", c),
 
                 Self::List(l) => {
-                    if l.len() == 0 {
+                    if l.borrow().len() == 0 {
                         return write!(f, "()");
                     }
                     write!(f, "(")?;
-                    for i in 0..(l.len() - 1) {
-                        write!(f, "{} ", l[i])?;
+                    for i in 0..(l.borrow().len() - 1) {
+                        write!(f, "{} ", &l.borrow()[i])?;
                     }
-                    write!(f, "{})", l[l.len() - 1])
+                    write!(f, "{})", (&l.borrow())[l.borrow().len() - 1])
                 }
 
                 Self::Symbol(s) => write!(f, "{}", s),

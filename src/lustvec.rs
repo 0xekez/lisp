@@ -6,6 +6,9 @@ use std::ops::{Index, IndexMut};
 #[derive(Debug, Clone)]
 pub struct LustVec<T> {
     pub data: Vec<T>,
+    /// Is this vec mutable. This is used for things inside of
+    /// function bodies which can be looked at but not changed.
+    pub mutable: bool,
 }
 
 impl<T> LustVec<T>
@@ -13,24 +16,37 @@ where
     T: Clone + Default,
 {
     pub fn new() -> Self {
-        Self { data: Vec::new() }
+        Self {
+            data: Vec::new(),
+            mutable: true,
+        }
+    }
+
+    pub fn new_imutable() -> Self {
+        Self {
+            data: Vec::new(),
+            mutable: false,
+        }
     }
 
     pub fn with_capacity(size: usize) -> Self {
         Self {
             data: Vec::with_capacity(size),
+            mutable: true,
         }
     }
 
     pub fn with_len(size: usize) -> Self {
         Self {
             data: vec![Default::default(); size],
+            mutable: true,
         }
     }
 
     pub fn from_slice(slice: &[T]) -> Self {
         Self {
             data: slice.to_vec(),
+            mutable: true,
         }
     }
 

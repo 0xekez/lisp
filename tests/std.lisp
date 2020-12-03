@@ -76,12 +76,6 @@
 		    #t
 		  (any (cdr list))))))
 
-;; Returns true if all of its arguments are true.
-(let '&& (fn (& args) (all args)))
-
-;; Returns true if any if its arguments are true.
-(let '|| (fn (& args) (any args)))
-
 (let '== (fn (first second & rest)
 	     (if (eq first second)
 		 (all (map (fn (i) (eq i second)) rest))

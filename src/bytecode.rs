@@ -35,10 +35,10 @@ impl Executor {
 
     pub fn compile(data: &LustData) -> Result<Vec<Inst>, String> {
         match data {
-            LustData::Symbol(s) => Ok(vec![Inst::GetSym(s.clone())]),
+            LustData::Symbol(s) => Ok(vec![Inst::GetSym(*s.clone())]),
             LustData::List(l) => {
                 let mut res = Vec::new();
-                for item in l.iter().rev() {
+                for item in l.borrow().iter().rev() {
                     res.extend(Self::compile(item)?);
                 }
                 res.push(Inst::Call);
