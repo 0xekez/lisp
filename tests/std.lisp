@@ -162,7 +162,7 @@
 		((eq (len args) 2) `(letq ,symbol ,`(fn ,(car args) ,(car (cdr args)))))
 		(else (error '"wrong number of arguments for define macro")))))
 
-(letq char (macro (c)
-      	   (if (eq (len c) 1)
-	       (car c)
-	     (error "can not convert to char"))))
+(letq char (macro (s)
+      	   `(if (eq (len ,s) 1)
+	       (car ,s)
+	     (error '"can not convert to char"))))

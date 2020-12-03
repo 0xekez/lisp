@@ -205,7 +205,7 @@ impl Interpreter {
                 fnenv.borrow_mut().data.insert(param.clone(), arg);
             }
 
-            fnenv.borrow_mut().outer = Some(env);
+            fnenv.borrow_mut().outer = Some(func.env.clone());
             Ok(CallResult::Call(fnenv, func.body.clone()))
         }
     }
