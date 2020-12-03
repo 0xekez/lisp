@@ -53,6 +53,9 @@
 		   #t
 		 #f))))
 
+(let 'not (fn (a)
+	      (if a #f #t)))
+
 ;; Returns a list which is the result of calling OP on each item in
 ;; LIST.
 (let 'map (fn (op list)
