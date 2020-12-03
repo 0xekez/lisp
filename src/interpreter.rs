@@ -267,8 +267,8 @@ pub struct LustFn {
 }
 
 pub struct LustEnv {
-    pub data: HashMap<String, LustData>,
-    pub outer: Option<Rc<RefCell<LustEnv>>>,
+    data: HashMap<String, LustData>,
+    outer: Option<Rc<RefCell<LustEnv>>>,
 }
 
 impl LustData {
@@ -409,6 +409,14 @@ impl LustEnv {
         }
     }
 
+    pub fn insert(&mut self, id: String, val: LustData) {
+        self.data.insert(id, val.clone());
+    }
+
+    pub fn extend(&mut self, other: &Self) {
+        self.data.extend(other.data.clone())
+    }
+
     pub fn set_global(&mut self, id: String, val: &LustData) -> Option<LustData> {
         match self.outer {
             Some(ref outer) => outer.borrow_mut().set_global(id, val),
@@ -425,8 +433,6 @@ impl PartialEq for LustData {
             (LustData::List(ref l), LustData::List(ref r)) => {
                 l.len() == r.len() && l.iter().zip(r.iter()).all(|(lhs, rhs)| lhs == rhs)
             }
-            // (LustData::Fn(l), LustData::Fn(r)) => l == r,
-            // (LustData::Mac(l), LustData::Mac(r)) => l == r,
             (LustData::Char(l), LustData::Char(r)) => l == r,
             (_, _) => false,
         }

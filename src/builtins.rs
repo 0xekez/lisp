@@ -104,7 +104,7 @@ pub fn let_(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<Call
     let target = Interpreter::eval_in_env(&args[0], env.clone())?;
     let target = LustData::expect_symbol(&target)?;
     let val = Interpreter::eval_in_env(&args[1], env.clone())?;
-    env.borrow_mut().data.insert(target.clone(), val.clone());
+    env.borrow_mut().insert(target.clone(), val.clone());
     Ok(CallResult::Ret(val))
 }
 
@@ -194,12 +194,7 @@ pub fn import(args: &RevSlice<LustData>, env: Rc<RefCell<LustEnv>>) -> Result<Ca
     let mut target = LustData::expect_symbol(&target)?.clone();
     target.push_str(".lisp");
     let evaluator = crate::interpret_file(&target)?;
-    env.borrow_mut()
-        .data
-        // Sadly need to clone here. Would be unsafe to move out of a
-        // reference counted value because we'd be liable to give
-        // other owners a headache.
-        .extend((*evaluator.global_env.borrow_mut()).data.clone());
+    env.borrow_mut().extend(&*evaluator.global_env.borrow_mut());
     Ok(CallResult::Ret(LustData::get_empty_list()))
 }
 
