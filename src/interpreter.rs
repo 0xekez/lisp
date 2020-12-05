@@ -175,24 +175,16 @@ impl Interpreter {
                     let val = if i >= args.len() {
                         LustData::get_empty_list()
                     } else {
-                        let mut tmp = Vec::with_capacity(args.len() - i);
-
-                        for j in i..args.len() {
-                            let e = &args[j];
-                            let arg = if eval_args {
-                                Self::eval_in_env(e, env.clone())?
-                            } else {
-                                e.clone()
-                            };
-                            tmp.push(arg);
-                        }
-
-                        let mut res = Rc::new(ConsCell::Nil);
-                        for item in tmp.into_iter().rev() {
-                            res = Rc::new(ConsCell::push_front(res, item));
-                        }
-
-                        LustData::Cons(res)
+                        let varadic_args = args.nth_item(i);
+                        LustData::Cons(Rc::new(varadic_args.transform_fallible(
+                            |item: &LustData| {
+                                if eval_args {
+                                    Self::eval_in_env(&item, env.clone())
+                                } else {
+                                    Ok(item.clone())
+                                }
+                            },
+                        )?))
                     };
                     fnenv.borrow_mut().insert(bind, val);
                     break;
@@ -215,14 +207,6 @@ impl Expr {
     fn to_data(&self) -> Result<LustData, String> {
         match &self.val {
             ExprVal::Number(f) => Ok(LustData::Number(*f)),
-            // ExprVal::List(ref v) => {
-            //     let res = Rc::new(RefCell::new(LustVec::with_capacity(v.len())));
-            //     for e in v.iter().rev() {
-            //         let data = e.to_data()?;
-            //         res.borrow_mut().push_front(data);
-            //     }
-            //     Ok(LustData::List(res))
-            // }
             ExprVal::List(ref l) => Self::list_to_cons(l),
             ExprVal::String(s) => Ok(LustData::from_string(s)),
             ExprVal::Id(s) => Ok(LustData::Symbol(Box::new(s.clone()))),
@@ -348,20 +332,9 @@ impl LustData {
 
     pub fn deep_clone(&self, mutable: bool) -> LustData {
         match self {
-            LustData::Cons(ref c) => {
-                let mut tmp = Vec::with_capacity(c.len());
-
-                for item in c.into_iter() {
-                    tmp.push(item);
-                }
-
-                let mut res = Rc::new(ConsCell::Nil);
-                for item in tmp.iter().rev() {
-                    res = Rc::new(ConsCell::push_front(res, item.deep_clone(mutable)));
-                }
-
-                LustData::Cons(res)
-            }
+            LustData::Cons(ref c) => LustData::Cons(Rc::new(
+                c.transform_infallible(|item: &LustData| item.deep_clone(mutable)),
+            )),
             _ => self.clone(),
         }
     }
@@ -376,20 +349,21 @@ impl LustData {
 
     pub fn stringify(&self) -> Option<String> {
         match self {
-            // LustData::List(l) => {
-            //     if l.borrow().len() == 0 {
-            //         return None;
-            //     }
-            //     let mut res = String::with_capacity(l.borrow().len());
-            //     for d in l.borrow().iter() {
-            //         let c = match d.expect_char() {
-            //             Ok(c) => c,
-            //             Err(_) => return None,
-            //         };
-            //         res.push(c);
-            //     }
-            //     Some(res)
-            // }
+            LustData::Cons(ref c) => {
+                let len = c.len();
+                if len == 0 {
+                    return None;
+                }
+                let mut res = String::with_capacity(len);
+                for d in c.into_iter() {
+                    let c = match d.expect_char() {
+                        Ok(c) => c,
+                        Err(_) => return None,
+                    };
+                    res.push(c);
+                }
+                Some(res)
+            }
             _ => None,
         }
     }
@@ -513,7 +487,7 @@ impl fmt::Display for LustData {
                 Self::Number(n) => write!(f, "{}", n),
                 Self::Char(c) => write!(f, "'{}'", c),
 
-                Self::Cons(c) => write!(f, "{}", c),
+                Self::Cons(c) => write!(f, "({})", c),
 
                 Self::Symbol(s) => write!(f, "{}", s),
                 Self::Builtin(_) => write!(f, "<builtin anonymous fn>"),
@@ -552,25 +526,6 @@ impl fmt::Display for LustData {
     }
 }
 
-impl Index<usize> for ConsCell {
-    type Output = LustData;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        match self {
-            ConsCell::Nil => {
-                panic!("index out of bounds");
-            }
-            ConsCell::Cons(ref c) => {
-                if index == 0 {
-                    &c.data
-                } else {
-                    &c.next[index - 1]
-                }
-            }
-        }
-    }
-}
-
 impl ConsCell {
     pub fn len(&self) -> usize {
         match self {
@@ -589,8 +544,51 @@ impl ConsCell {
 
     pub fn is_mutable(&self) -> bool {
         match self {
-            ConsCell::Nil => false,
+            ConsCell::Nil => true,
             ConsCell::Cons(ref c) => c.mutable,
+        }
+    }
+
+    pub fn transform_fallible<F>(&self, f: F) -> Result<Self, String>
+    where
+        F: Fn(&LustData) -> Result<LustData, String>,
+    {
+        Ok(match self {
+            ConsCell::Nil => ConsCell::Nil,
+            ConsCell::Cons(ref c) => ConsCell::Cons(Cons {
+                data: f(&c.data)?,
+                next: Rc::new(c.next.transform_fallible(f)?),
+                mutable: true,
+            }),
+        })
+    }
+
+    pub fn transform_infallible<F>(&self, f: F) -> Self
+    where
+        F: Fn(&LustData) -> LustData,
+    {
+        match self {
+            ConsCell::Nil => ConsCell::Nil,
+            ConsCell::Cons(ref c) => ConsCell::Cons(Cons {
+                data: f(&c.data),
+                next: Rc::new(c.next.transform_infallible(f)),
+                mutable: true,
+            }),
+        }
+    }
+
+    pub fn nth_item(&self, n: usize) -> &Self {
+        match self {
+            ConsCell::Nil => {
+                panic!("index out of bounds");
+            }
+            ConsCell::Cons(ref c) => {
+                if n == 0 {
+                    &self
+                } else {
+                    c.next.nth_item(n - 1)
+                }
+            }
         }
     }
 }
@@ -600,10 +598,13 @@ impl fmt::Display for ConsCell {
         match self {
             ConsCell::Nil => write!(f, "()"),
             ConsCell::Cons(ref cell) => {
-                write!(f, "(")?;
                 write!(f, "{}", cell.data)?;
-                write!(f, " {}", cell.next)?;
-                write!(f, ")")
+                match *cell.next {
+                    ConsCell::Cons(_) => {
+                        write!(f, " {}", cell.next)
+                    }
+                    ConsCell::Nil => write!(f, ""),
+                }
             }
         }
     }
@@ -631,6 +632,25 @@ impl<'a> Iterator for ConsCellIterator<'a> {
                 let data = &c.data;
                 self.cell = &*c.next;
                 Some(data)
+            }
+        }
+    }
+}
+
+impl Index<usize> for ConsCell {
+    type Output = LustData;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match self {
+            ConsCell::Nil => {
+                panic!("index out of bounds");
+            }
+            ConsCell::Cons(ref c) => {
+                if index == 0 {
+                    &c.data
+                } else {
+                    &c.next[index - 1]
+                }
             }
         }
     }

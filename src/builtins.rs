@@ -250,18 +250,9 @@ pub fn eq(args: &ConsCell, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, Stri
 pub fn quaziquote(args: &ConsCell, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("quaziquote", 1, args)?;
     let c = args[0].expect_cons()?;
-    let mut tmp = Vec::with_capacity(c.len());
-
-    for item in c.into_iter() {
-        tmp.push(item);
-    }
-
-    let mut res = Rc::new(ConsCell::Nil);
-    for item in tmp.iter().rev() {
-        res = Rc::new(ConsCell::push_front(res, eval_commas(&item, env.clone())?));
-    }
-
-    Ok(CallResult::Ret(LustData::Cons(res)))
+    Ok(CallResult::Ret(LustData::Cons(Rc::new(
+        c.transform_fallible(|item: &LustData| eval_commas(&item, env.clone()))?,
+    ))))
 }
 
 fn eval_commas(data: &LustData, env: Rc<RefCell<LustEnv>>) -> Result<LustData, String> {
@@ -275,18 +266,9 @@ fn eval_commas(data: &LustData, env: Rc<RefCell<LustEnv>>) -> Result<LustData, S
                 // is_comma returned true.
                 eval_comma(&*c, env)
             } else {
-                let mut tmp = Vec::with_capacity(c.len());
-
-                for item in c.into_iter() {
-                    tmp.push(item);
-                }
-
-                let mut res = Rc::new(ConsCell::Nil);
-                for item in tmp.iter().rev() {
-                    res = Rc::new(ConsCell::push_front(res, eval_commas(&item, env.clone())?));
-                }
-
-                Ok(LustData::Cons(res))
+                Ok(LustData::Cons(Rc::new(c.transform_fallible(
+                    |item: &LustData| eval_commas(&item, env.clone()),
+                )?)))
             }
         }
         _ => Ok(data.clone()),
