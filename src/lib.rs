@@ -1,5 +1,5 @@
 pub mod builtins;
-pub mod bytecode;
+// pub mod bytecode;
 pub mod errors;
 pub mod interpreter;
 // pub mod jit;
