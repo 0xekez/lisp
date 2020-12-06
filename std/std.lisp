@@ -53,6 +53,9 @@
 		   #t
 		 #f))))
 
+(let 'not (fn (a)
+	      (if a #f #t)))
+
 ;; Returns a list which is the result of calling OP on each item in
 ;; LIST.
 (let 'map (fn (op list)
@@ -75,6 +78,12 @@
 		(if (car list)
 		    #t
 		  (any (cdr list))))))
+
+;; Returns true if all of its arguments are true.
+(let '&& (fn (& args) (all args)))
+
+;; Returns true if any if its arguments are true.
+(let '|| (fn (& args) (any args)))
 
 (let '== (fn (first second & rest)
 	     (if (eq first second)

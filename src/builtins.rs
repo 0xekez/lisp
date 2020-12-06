@@ -162,7 +162,17 @@ pub fn import(args: &ConsCell, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, 
     let target = Interpreter::eval_in_env(&args[0], env.clone())?;
     let mut target = LustData::expect_symbol(&target)?.clone();
     target.push_str(".lisp");
-    let evaluator = crate::interpret_file(&target)?;
+
+    let evaluator = match crate::interpret_file(&target) {
+        Ok(i) => i,
+        Err(_) => {
+            let key = "LUSTPATH";
+            match std::env::var(key) {
+                Ok(val) => crate::interpret_file(&(val + &target))?,
+                Err(_) => return Err(format!("failed to resolve import file {}", target)),
+            }
+        }
+    };
     env.borrow_mut().extend(&*evaluator.global_env.borrow_mut());
     Ok(CallResult::Ret(LustData::get_empty_list()))
 }

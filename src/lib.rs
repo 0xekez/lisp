@@ -63,7 +63,10 @@ pub fn do_repl(evaluator: &mut Interpreter) {
 }
 
 pub fn interpret_file(path: &str) -> Result<Interpreter, String> {
-    let contents = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let contents = match std::fs::read_to_string(path).map_err(|e| e.to_string()) {
+        Ok(s) => s,
+        Err(e) => return Err(format!("failed to read file {}: {}", path, e)),
+    };
     let mut evaluator = Interpreter::new();
     let mut parser = Parser::new(&contents);
 
