@@ -16,8 +16,6 @@ use repl::REPLHelper;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
-use rustyline::Config;
-
 use crate::errors::{Error, Printable};
 use crate::interpreter::Interpreter;
 use crate::parser::Parser;
