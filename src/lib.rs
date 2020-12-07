@@ -10,8 +10,6 @@ pub mod symboltable;
 pub mod tokenbuffer;
 pub mod tokenizer;
 
-extern crate colored;
-
 use repl::REPLHelper;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
