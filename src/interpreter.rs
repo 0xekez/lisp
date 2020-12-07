@@ -44,8 +44,11 @@ impl Interpreter {
     /// repl.
     pub fn eval_print(&mut self, expr: &Expr) -> Result<(), String> {
         let data = expr.to_data()?;
+        let res = Self::eval_in_env(&data, self.global_env.clone())?;
 
-        println!("=> {}", Self::eval_in_env(&data, self.global_env.clone())?);
+        if !res.is_empty_list() {
+            println!("=> {}", res);
+        }
         Ok(())
     }
 
@@ -291,7 +294,14 @@ impl LustData {
         for c in s.chars().rev() {
             res = Rc::new(ConsCell::push_front(res, LustData::Char(c)))
         }
-        LustData::Cons(res)
+        let mut quote = Rc::new(ConsCell::Nil);
+        quote = Rc::new(ConsCell::push_front(quote, LustData::Cons(res)));
+        quote = Rc::new(ConsCell::push_front(
+            quote,
+            LustData::Symbol(Box::new("quote".to_string())),
+        ));
+
+        LustData::Cons(quote)
     }
 
     /// Extracts a list from some data or returns an error.
@@ -328,6 +338,16 @@ impl LustData {
     /// Gets an empty list.
     pub fn get_empty_list() -> LustData {
         LustData::Cons(Rc::new(ConsCell::Nil))
+    }
+
+    pub fn is_empty_list(&self) -> bool {
+        match self {
+            LustData::Cons(ref c) => match **c {
+                ConsCell::Nil => true,
+                ConsCell::Cons(_) => false,
+            },
+            _ => false,
+        }
     }
 
     pub fn deep_clone(&self, mutable: bool) -> LustData {
@@ -596,7 +616,7 @@ impl ConsCell {
 impl fmt::Display for ConsCell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConsCell::Nil => write!(f, "()"),
+            ConsCell::Nil => write!(f, ""),
             ConsCell::Cons(ref cell) => {
                 write!(f, "{}", cell.data)?;
                 match *cell.next {

@@ -163,9 +163,9 @@
      	     (cond
 		((eq (len args) 1) `(letq ,symbol ,(car args)))
 		((eq (len args) 2) `(letq ,symbol ,`(fn ,(car args) ,(car (cdr args)))))
-		(else (error '"wrong number of arguments for define macro")))))
+		(else (error "wrong number of arguments for define macro")))))
 
 (letq char (macro (s)
       	   `(if (eq (len ,s) 1)
 	       (car ,s)
-	     (error '"can not convert to char"))))
+	     (error "can not convert to char"))))

@@ -1,10 +1,15 @@
 (import 'std)
+(import 'format)
 
-(letq fib (fn (n)
-	      (if (lt n 2)
-		  n
-		(add
-		 (fib (sub n 2))
-		 (fib (sub n 1))))))
+(let 'fib (fn (n)
+	      (do
+	       (let 'fibtail (fn (n a b)
+				 (cond
+				  ((eq n 0) a)
+				  ((eq n 1) b)
+				  (#t (fibtail (sub n 1) b (add a b))))))
+	       (fibtail n 0 1))))
 
-(println (fib 20))
+(let 'n 40)
+
+(printf "fib({}) => {}\n" n (fib n))

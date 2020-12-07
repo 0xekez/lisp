@@ -1,33 +1,43 @@
 pub mod builtins;
-// pub mod bytecode;
 pub mod errors;
 pub mod interpreter;
-// pub mod jit;
 pub mod location;
 pub mod lustvec;
 pub mod parser;
 pub mod reader;
+pub mod repl;
 pub mod symboltable;
 pub mod tokenbuffer;
 pub mod tokenizer;
 
 extern crate colored;
 
+use repl::REPLHelper;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
+
+use rustyline::Config;
 
 use crate::errors::{Error, Printable};
 use crate::interpreter::Interpreter;
 use crate::parser::Parser;
 
 pub fn do_repl(evaluator: &mut Interpreter) {
-    let mut rl = Editor::<()>::new();
+    let mut rl = Editor::<REPLHelper>::new();
+    let helper = repl::REPLHelper::new();
+    rl.set_helper(Some(helper));
+
+    let indent = rustyline::KeyEvent::new('\t', rustyline::Modifiers::NONE);
+    rl.bind_sequence(indent, rustyline::Cmd::Insert(1, "    ".to_string()));
+
     loop {
-        let readline = rl.readline("lust> ");
+        let p = ">> ";
+        rl.helper_mut().expect("No helper").colored_prompt = format!("\x1b[1;32m{}\x1b[0m", p);
+        let readline = rl.readline(&p);
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
-                if line == "(exit)" {
+                if line.trim() == "(exit)" {
                     break;
                 }
                 let mut parser = Parser::new(&line);

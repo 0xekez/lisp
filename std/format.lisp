@@ -8,7 +8,7 @@
 (let 'printf (fn (lst & args)
 		 (when lst
 		   (do
-		    (let 'sections (split lst '"{}"))
+		    (let 'sections (split lst "{}"))
 		    (let 'helper (fn (split args)
 				     (when split
 				       (do
@@ -17,4 +17,5 @@
 					(let 'a (car args))
 					(when a (print a))
 					(helper (cdr split) (cdr args))))))
-		    (helper sections args)))))
+		    (helper sections args)
+		    (print "\n")))))
