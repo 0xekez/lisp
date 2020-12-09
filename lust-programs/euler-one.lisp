@@ -5,12 +5,6 @@
 (import 'mod)
 (import 'format)
 
-(let 'range (fn (start end)
-		(cond
-		 ((eq start end) ())
-		 ((lt start end) (cons start (range (add start 1) end)))
-		 ((gt start end) (cons start (range (sub start 1) end))))))
-
 (let 'filter-sum (fn (items pred)
 		     (sum (filter items pred))))
 

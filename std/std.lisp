@@ -130,6 +130,16 @@
 		      (filter (cdr items) pred)))
 		   ())))
 
+;; Generates a list of values in range [start, end)
+(let 'range (fn (start end)
+                (do
+                 (let 'mover (if (lt start end) sub add))
+                 (let 'helper (fn (start end accum)
+                                  (if (eq start end)
+                                      accum
+                                    (helper start (mover end 1) (cons end accum)))))
+                 (helper (sub start 1) (sub end 1) ()))))
+
 
 ;; Much like Scheme's condition. Takes a list of pairs where the first
 ;; argument and the second is an expression to evaluate if the
