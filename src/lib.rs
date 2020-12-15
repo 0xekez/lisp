@@ -1,7 +1,9 @@
 pub mod compiler;
 pub mod conversions;
+pub mod primitives;
 
 pub type Word = i64;
+pub type UWord = u64;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
@@ -9,4 +11,6 @@ pub enum Expr {
     Char(char),
     Bool(bool),
     Nil,
+    List(Vec<Expr>),
+    Symbol(String),
 }

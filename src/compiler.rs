@@ -1,3 +1,4 @@
+use crate::primitives::emit_primcall;
 use crate::Expr;
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::*;
@@ -42,11 +43,22 @@ pub fn emit_expr(
         Expr::Char(_) => builder.ins().iconst(word, expr.immediate_rep()),
         Expr::Bool(_) => builder.ins().iconst(word, expr.immediate_rep()),
         Expr::Nil => builder.ins().iconst(word, expr.immediate_rep()),
+        Expr::Symbol(_) => todo!("symbol evaluation"),
+        Expr::List(v) => {
+            if expr.is_primcall() {
+                emit_primcall(expr.primcall_op(), &v[1..], builder, word)?
+            } else {
+                todo!("non primitive function application")
+            }
+        }
     })
 }
 
 /// Compiles an expression and returns the result converted back into
 /// an expression.
+///
+/// NOTE: when our main mehtod gets more interesting this should only
+/// be included during test builds.
 pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
     let mut jit = JIT::default();
 
@@ -95,42 +107,4 @@ pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
     let code_fn = unsafe { std::mem::transmute::<_, fn() -> i64>(code_ptr) };
 
     Ok(Expr::from_immediate(code_fn()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_roundtrip(expr: Expr) {
-        assert_eq!(expr.clone(), roundtrip_expr(expr).unwrap())
-    }
-
-    #[test]
-    fn roundtrip_int() {
-        for i in -100..100 {
-            test_roundtrip(Expr::Integer(i));
-        }
-    }
-
-    #[test]
-    fn roundtrip_bool() {
-        test_roundtrip(Expr::Bool(false));
-        test_roundtrip(Expr::Bool(true));
-    }
-
-    #[test]
-    fn roundtrip_char() {
-        for c in '😀'..'😗' {
-            test_roundtrip(Expr::Char(c));
-        }
-
-        for c in 'a'..'z' {
-            test_roundtrip(Expr::Char(c));
-        }
-    }
-
-    #[test]
-    fn roundtrip_nil() {
-        test_roundtrip(Expr::Nil);
-    }
 }
