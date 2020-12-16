@@ -1,14 +1,20 @@
 # Lust
 
-Lust is reasonably small Lisp built on a small, solid core.
+Lust is reasonably small Lisp built on a small, solid core. Here's an example
+REPL session:
 
-```lisp
-(import 'format)
-
-(printf "hello {}!" "Lust")
+```
+>> (import 'format)
+>> (let 'say-hello (fn (name)
+                    (printf "hello {}!" name)))
+=> (fn (name) (printf (quote "hello {}!") name))
+>> (say-hello "Lust")
+hello Lust!
 ```
 
 You can find documentation about Lust [here](https://zmedley.com/lust).
+
+## Project Status
 
 At the moment, Lust has a functional interpreter and an early stage JIT
 [compiler](https://www.github.com/ZekeMedley/lustc) built on Bytecode Alliance's
@@ -31,7 +37,7 @@ At the moment these issues are more design issues than implementation ones. The
 design of Lust's compiler seems liable to heavily impact how I decide to build
 those in so I'm putting it off until more progress is made on that front.
 
-# Building Lust
+## Building Lust
 
 To build Lust you'll need a working Rust installation. Once you've got that its
 as easy as:
@@ -50,7 +56,7 @@ In order for Lust to locate files in its standard library you'll need to set the
 export LUSTPATH="<path to lust repo>/std/"
 ```
 
-# Using Lust
+## Using Lust
 
 You're best bet for using Lust is probably to take a look at some of the example
 programs [here](https://github.com/ZekeMedley/lust/tree/master/lust-programs)
