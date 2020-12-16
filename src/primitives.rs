@@ -1,9 +1,8 @@
 use cranelift::frontend::FunctionBuilder;
-use cranelift::prelude::InstBuilder;
-use cranelift::prelude::Type;
-use cranelift::prelude::Value;
+use cranelift::prelude::*;
 
 use crate::compiler::emit_expr;
+use crate::conversions;
 use crate::Expr;
 
 impl Expr {
@@ -45,20 +44,20 @@ pub fn emit_primcall(
     Ok(match name {
         "add1" => {
             check_arg_len("add1", args, 1)?;
-            let res = emit_expr(&args[0], builder, word)?;
+            let accum = emit_expr(&args[0], builder, word)?;
             builder
                 .ins()
-                .iadd_imm(res, Expr::Integer(1).immediate_rep())
+                .iadd_imm(accum, Expr::Integer(1).immediate_rep())
         }
         "integer->char" => {
             check_arg_len("integer->char", args, 1)?;
 
             // To convert an integer to a character we left shift by 6
             // and then tag it with the character tag.
-            let res = emit_expr(&args[0], builder, word)?;
-            let res = builder.ins().ishl_imm(res, 6);
-            let res = builder.ins().bor_imm(res, crate::conversions::CHAR_TAG);
-            res
+            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = builder.ins().ishl_imm(accum, 6);
+            let accum = builder.ins().bor_imm(accum, conversions::CHAR_TAG);
+            accum
         }
         "char->integer" => {
             check_arg_len("char->integer", args, 1)?;
@@ -69,16 +68,91 @@ pub fn emit_primcall(
             // NOTE: We're skipping some of the work here because
             // we're assuming the input is an integer and as such
             // there is no need to tag after the right shift.
-            let res = emit_expr(&args[0], builder, word)?;
-            let res = builder.ins().ushr_imm(res, 6);
-            res
+            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = builder.ins().ushr_imm(accum, 6);
+            accum
         }
-        _ => panic!("non primitive in emit_primcall"),
+        "null?" => {
+            check_arg_len("null?", args, 1)?;
+            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::NIL_VALUE);
+            // The result of this comparason is a boolean value so we
+            // need to convert it back to a word before working on it.
+            let accum = builder.ins().bint(word, accum);
+            emit_word_to_bool(accum, builder)
+        }
+        "zero?" => {
+            check_arg_len("zero?", args, 1)?;
+
+            let accum = emit_expr(&args[0], builder, word)?;
+            let accum =
+                builder
+                    .ins()
+                    .icmp_imm(IntCC::Equal, accum, Expr::Integer(0).immediate_rep());
+            let accum = builder.ins().bint(word, accum);
+            emit_word_to_bool(accum, builder)
+        }
+        "not" => {
+            check_arg_len("not", args, 1)?;
+
+            let accum = emit_expr(&args[0], builder, word)?;
+
+            // To get the not of a boolean, subtract one from it and
+            // then take the absolute value.
+            let accum = builder.ins().sshr_imm(accum, conversions::BOOL_SHIFT);
+            let accum = builder.ins().iadd_imm(accum, -1);
+            // FIXME: there is some serious black magic surrounding
+            // why we don't need to take the absolute value
+            // here. Taking the absolute value causes a compilation
+            // error when cranelift is verifying things.
+            // let accum = builder.ins().iabs(accum);
+            emit_word_to_bool(accum, builder)
+        }
+        "integer?" => {
+            check_arg_len("integer?", args, 1)?;
+
+            let accum = emit_expr(&args[0], builder, word)?;
+
+            let accum = builder.ins().band_imm(accum, conversions::FIXNUM_MASK);
+            let accum = builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::FIXNUM_TAG);
+            let accum = builder.ins().bint(word, accum);
+            emit_word_to_bool(accum, builder)
+        }
+        "boolean?" => {
+            check_arg_len("boolean?", args, 1)?;
+
+            let accum = emit_expr(&args[0], builder, word)?;
+
+            let accum = builder.ins().band_imm(accum, conversions::BOOL_MASK);
+            let accum = builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::BOOL_TAG);
+            let accum = builder.ins().bint(word, accum);
+            emit_word_to_bool(accum, builder)
+        }
+        _ => panic!("non primitive in emit_primcall: {}", name),
     })
 }
 
+fn emit_word_to_bool(accum: Value, builder: &mut FunctionBuilder) -> Value {
+    let accum = builder.ins().ishl_imm(accum, conversions::BOOL_SHIFT);
+    let accum = builder.ins().bor_imm(accum, conversions::BOOL_TAG);
+    accum
+}
+
 fn string_is_primitive(s: &str) -> bool {
-    s == "add1" || s == "integer->char" || s == "char->integer"
+    s == "add1"
+        || s == "integer->char"
+        || s == "char->integer"
+        || s == "null?"
+        || s == "zero?"
+        || s == "not"
+        || s == "boolean?"
+        || s == "integer?"
 }
 
 fn check_arg_len(name: &str, args: &[Expr], expected: usize) -> Result<(), String> {
@@ -99,7 +173,7 @@ mod tests {
     use super::*;
 
     fn test_evaluation(expr: Expr, expected: Expr) {
-        assert_eq!(expected, crate::compiler::roundtrip_expr(expr).unwrap())
+        assert_eq!(crate::compiler::roundtrip_expr(expr).unwrap(), expected)
     }
 
     #[test]
@@ -151,7 +225,7 @@ mod tests {
 
     #[test]
     fn char_to_integer() {
-        for c in 'a'..'😀' {
+        for c in 'a'..'z' {
             let ast = Expr::List(vec![
                 Expr::Symbol("integer->char".to_string()),
                 Expr::List(vec![
@@ -160,6 +234,93 @@ mod tests {
                 ]),
             ]);
             let expected = Expr::Char(c);
+            test_evaluation(ast, expected);
+        }
+    }
+
+    #[test]
+    fn is_null() {
+        let ast = Expr::List(vec![Expr::Symbol("null?".to_string()), Expr::Nil]);
+        let expected = Expr::Bool(true);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![Expr::Symbol("null?".to_string()), Expr::Integer(0)]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn is_zero() {
+        let ast = Expr::List(vec![Expr::Symbol("zero?".to_string()), Expr::Nil]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![Expr::Symbol("zero?".to_string()), Expr::Integer(0)]);
+        let expected = Expr::Bool(true);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn not() {
+        let ast = Expr::List(vec![Expr::Symbol("not".to_string()), Expr::Bool(false)]);
+        let expected = Expr::Bool(true);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![Expr::Symbol("not".to_string()), Expr::Bool(true)]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn is_boolean() {
+        let ast = Expr::List(vec![Expr::Symbol("boolean?".to_string()), Expr::Nil]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![Expr::Symbol("boolean?".to_string()), Expr::Integer(1)]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![Expr::Symbol("boolean?".to_string()), Expr::Char('a')]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![
+            Expr::Symbol("boolean?".to_string()),
+            Expr::Bool(false),
+        ]);
+        let expected = Expr::Bool(true);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![Expr::Symbol("boolean?".to_string()), Expr::Bool(true)]);
+        let expected = Expr::Bool(true);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn is_integer() {
+        let ast = Expr::List(vec![Expr::Symbol("integer?".to_string()), Expr::Nil]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![Expr::Symbol("integer?".to_string()), Expr::Char('a')]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![
+            Expr::Symbol("integer?".to_string()),
+            Expr::Bool(false),
+        ]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![Expr::Symbol("integer?".to_string()), Expr::Bool(true)]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+
+        for i in -10..10 {
+            let ast = Expr::List(vec![Expr::Symbol("integer?".to_string()), Expr::Integer(i)]);
+            let expected = Expr::Bool(true);
             test_evaluation(ast, expected);
         }
     }

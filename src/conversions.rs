@@ -1,18 +1,18 @@
 use crate::{Expr, UWord, Word};
 
-static FIXNUM_SHIFT: Word = 2;
-static FIXNUM_MASK: Word = 0b11;
-static FIXNUM_TAG: Word = 0;
+pub(crate) static FIXNUM_SHIFT: Word = 2;
+pub(crate) static FIXNUM_MASK: Word = 0b11;
+pub(crate) static FIXNUM_TAG: Word = 0;
 
-static CHAR_SHIFT: Word = 8;
-static CHAR_MASK: Word = 0b11111111;
-pub static CHAR_TAG: Word = 0b00001111;
+pub(crate) static CHAR_SHIFT: Word = 8;
+pub(crate) static CHAR_MASK: Word = 0b11111111;
+pub(crate) static CHAR_TAG: Word = 0b00001111;
 
-static BOOL_SHIFT: Word = 7;
-static BOOL_MASK: Word = 0b1111111;
-static BOOL_TAG: Word = 0b0011111;
+pub(crate) static BOOL_SHIFT: Word = 7;
+pub(crate) static BOOL_MASK: Word = 0b1111111;
+pub(crate) static BOOL_TAG: Word = 0b0011111;
 
-static NIL_VALUE: Word = 0b00101111;
+pub(crate) static NIL_VALUE: Word = 0b00101111;
 
 /// Values on the heap use their last three bits (values 0..7) to
 /// store their type tag. The tag mask extracts that tag value.
