@@ -1,4 +1,5 @@
 pub mod compiler;
+pub mod conditional;
 pub mod conversions;
 pub mod locals;
 pub mod primitives;

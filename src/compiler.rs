@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::conditional;
 use crate::locals;
 use crate::primitives;
 use crate::Expr;
@@ -53,6 +54,8 @@ pub fn emit_expr(
                 primitives::emit_primcall(expr.primcall_op(), &v[1..], builder, word, env)?
             } else if let Some((s, e)) = expr.is_let() {
                 locals::emit_let(s, e, builder, word, env)?
+            } else if let Some((cond, then, else_)) = expr.is_conditional() {
+                conditional::emit_conditional(cond, then, else_, builder, word, env)?
             } else {
                 todo!("unsupported function application")
             }
