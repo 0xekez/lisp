@@ -1,10 +1,12 @@
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::*;
+use std::collections::HashMap;
 
 use crate::compiler::emit_expr;
 use crate::conversions;
 use crate::Expr;
 
+// TODO: refactor to look like is_let in locals.rs
 impl Expr {
     pub fn is_primcall(&self) -> bool {
         match self {
@@ -39,12 +41,13 @@ pub fn emit_primcall(
     args: &[Expr],
     builder: &mut FunctionBuilder,
     word: Type,
+    env: &mut HashMap<String, Variable>,
 ) -> Result<Value, String> {
     debug_assert!(string_is_primitive(name));
     Ok(match name {
         "add1" => {
             check_arg_len("add1", args, 1)?;
-            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = emit_expr(&args[0], builder, word, env)?;
             builder
                 .ins()
                 .iadd_imm(accum, Expr::Integer(1).immediate_rep())
@@ -54,7 +57,7 @@ pub fn emit_primcall(
 
             // To convert an integer to a character we left shift by 6
             // and then tag it with the character tag.
-            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = emit_expr(&args[0], builder, word, env)?;
             let accum = builder.ins().ishl_imm(accum, 6);
             let accum = builder.ins().bor_imm(accum, conversions::CHAR_TAG);
             accum
@@ -68,13 +71,13 @@ pub fn emit_primcall(
             // NOTE: We're skipping some of the work here because
             // we're assuming the input is an integer and as such
             // there is no need to tag after the right shift.
-            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = emit_expr(&args[0], builder, word, env)?;
             let accum = builder.ins().ushr_imm(accum, 6);
             accum
         }
         "null?" => {
             check_arg_len("null?", args, 1)?;
-            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = emit_expr(&args[0], builder, word, env)?;
             let accum = builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::NIL_VALUE);
@@ -86,7 +89,7 @@ pub fn emit_primcall(
         "zero?" => {
             check_arg_len("zero?", args, 1)?;
 
-            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = emit_expr(&args[0], builder, word, env)?;
             let accum =
                 builder
                     .ins()
@@ -97,7 +100,7 @@ pub fn emit_primcall(
         "not" => {
             check_arg_len("not", args, 1)?;
 
-            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = emit_expr(&args[0], builder, word, env)?;
 
             // To get the not of a boolean, subtract one from it and
             // then take the absolute value.
@@ -113,7 +116,7 @@ pub fn emit_primcall(
         "integer?" => {
             check_arg_len("integer?", args, 1)?;
 
-            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = emit_expr(&args[0], builder, word, env)?;
 
             let accum = builder.ins().band_imm(accum, conversions::FIXNUM_MASK);
             let accum = builder
@@ -125,7 +128,7 @@ pub fn emit_primcall(
         "boolean?" => {
             check_arg_len("boolean?", args, 1)?;
 
-            let accum = emit_expr(&args[0], builder, word)?;
+            let accum = emit_expr(&args[0], builder, word, env)?;
 
             let accum = builder.ins().band_imm(accum, conversions::BOOL_MASK);
             let accum = builder
@@ -137,16 +140,16 @@ pub fn emit_primcall(
         "add" => {
             check_arg_len("add", args, 2)?;
 
-            let left = emit_expr(&args[0], builder, word)?;
-            let right = emit_expr(&args[1], builder, word)?;
+            let left = emit_expr(&args[0], builder, word, env)?;
+            let right = emit_expr(&args[1], builder, word, env)?;
 
             builder.ins().iadd(left, right)
         }
         "sub" => {
             check_arg_len("sub", args, 2)?;
 
-            let left = emit_expr(&args[0], builder, word)?;
-            let right = emit_expr(&args[1], builder, word)?;
+            let left = emit_expr(&args[0], builder, word, env)?;
+            let right = emit_expr(&args[1], builder, word, env)?;
             let right = builder.ins().ineg(right);
 
             builder.ins().iadd(left, right)
@@ -154,8 +157,8 @@ pub fn emit_primcall(
         "mul" => {
             check_arg_len("mul", args, 2)?;
 
-            let left = emit_expr(&args[0], builder, word)?;
-            let right = emit_expr(&args[1], builder, word)?;
+            let left = emit_expr(&args[0], builder, word, env)?;
+            let right = emit_expr(&args[1], builder, word, env)?;
 
             let accum = builder.ins().imul(left, right);
 
@@ -171,8 +174,8 @@ pub fn emit_primcall(
         "eq" => {
             check_arg_len("eq", args, 2)?;
 
-            let left = emit_expr(&args[0], builder, word)?;
-            let right = emit_expr(&args[1], builder, word)?;
+            let left = emit_expr(&args[0], builder, word, env)?;
+            let right = emit_expr(&args[1], builder, word, env)?;
 
             let accum = builder.ins().icmp(IntCC::Equal, left, right);
             let accum = builder.ins().bint(word, accum);

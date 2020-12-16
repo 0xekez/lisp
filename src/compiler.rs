@@ -1,4 +1,7 @@
-use crate::primitives::emit_primcall;
+use std::collections::HashMap;
+
+use crate::locals;
+use crate::primitives;
 use crate::Expr;
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::*;
@@ -37,18 +40,21 @@ pub fn emit_expr(
     expr: &Expr,
     builder: &mut FunctionBuilder,
     word: types::Type,
+    env: &mut HashMap<String, Variable>,
 ) -> Result<Value, String> {
     Ok(match expr {
         Expr::Integer(_) => builder.ins().iconst(word, expr.immediate_rep()),
         Expr::Char(_) => builder.ins().iconst(word, expr.immediate_rep()),
         Expr::Bool(_) => builder.ins().iconst(word, expr.immediate_rep()),
         Expr::Nil => builder.ins().iconst(word, expr.immediate_rep()),
-        Expr::Symbol(_) => todo!("symbol evaluation"),
+        Expr::Symbol(name) => locals::emit_var_access(name, builder, env)?,
         Expr::List(v) => {
             if expr.is_primcall() {
-                emit_primcall(expr.primcall_op(), &v[1..], builder, word)?
+                primitives::emit_primcall(expr.primcall_op(), &v[1..], builder, word, env)?
+            } else if let Some((s, e)) = expr.is_let() {
+                locals::emit_let(s, e, builder, word, env)?
             } else {
-                todo!("non primitive function application")
+                todo!("unsupported function application")
             }
         }
     })
@@ -78,12 +84,68 @@ pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
     // Start putting code in the new block.
     builder.switch_to_block(entry_block);
 
+    let mut env = HashMap::new();
     // Compile the value and get the "output" of the instrution stored
     // in `val`.
-    let val = emit_expr(&expr, &mut builder, word)?;
+    let val = emit_expr(&expr, &mut builder, word, &mut env)?;
 
     // Emit a return instruction to return the result.
     builder.ins().return_(&[val]);
+
+    // Clean up
+    builder.seal_all_blocks();
+    builder.finalize();
+
+    let id = jit
+        .module
+        .declare_function("lust_entry", Linkage::Export, &jit.context.func.signature)
+        .map_err(|e| e.to_string())?;
+
+    jit.module
+        .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
+        .map_err(|e| e.to_string())?;
+
+    jit.module.clear_context(&mut jit.context);
+
+    jit.module.finalize_definitions();
+
+    let code_ptr = jit.module.get_finalized_function(id);
+
+    let code_fn = unsafe { std::mem::transmute::<_, fn() -> i64>(code_ptr) };
+
+    Ok(Expr::from_immediate(code_fn()))
+}
+
+pub fn roundtrip_exprs(exprs: &[Expr]) -> Result<Expr, String> {
+    let mut jit = JIT::default();
+
+    let word = jit.module.target_config().pointer_type();
+
+    // Signature for the function that we're compiling. This function
+    // takes no arguments and returns an integer.
+    jit.context.func.signature.returns.push(AbiParam::new(word));
+
+    // Create a new builder for building our function and create a new
+    // block to compile into.
+    let mut builder = FunctionBuilder::new(&mut jit.context.func, &mut jit.builder_context);
+    let entry_block = builder.create_block();
+
+    // Give the paramaters that we set up earlier to this entry block.
+    builder.append_block_params_for_function_params(entry_block);
+    // Start putting code in the new block.
+    builder.switch_to_block(entry_block);
+
+    let mut env = HashMap::new();
+
+    let vals = exprs
+        .iter()
+        .map(|e| emit_expr(e, &mut builder, word, &mut env))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Emit a return instruction to return the result.
+    builder.ins().return_(&[*vals
+        .last()
+        .ok_or("expected at least one expression".to_string())?]);
 
     // Clean up
     builder.seal_all_blocks();

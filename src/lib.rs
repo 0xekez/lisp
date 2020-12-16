@@ -1,5 +1,6 @@
 pub mod compiler;
 pub mod conversions;
+pub mod locals;
 pub mod primitives;
 
 pub type Word = i64;
