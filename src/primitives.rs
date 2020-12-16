@@ -134,6 +134,51 @@ pub fn emit_primcall(
             let accum = builder.ins().bint(word, accum);
             emit_word_to_bool(accum, builder)
         }
+        "add" => {
+            check_arg_len("add", args, 2)?;
+
+            let left = emit_expr(&args[0], builder, word)?;
+            let right = emit_expr(&args[1], builder, word)?;
+
+            builder.ins().iadd(left, right)
+        }
+        "sub" => {
+            check_arg_len("sub", args, 2)?;
+
+            let left = emit_expr(&args[0], builder, word)?;
+            let right = emit_expr(&args[1], builder, word)?;
+            let right = builder.ins().ineg(right);
+
+            builder.ins().iadd(left, right)
+        }
+        "mul" => {
+            check_arg_len("mul", args, 2)?;
+
+            let left = emit_expr(&args[0], builder, word)?;
+            let right = emit_expr(&args[1], builder, word)?;
+
+            let accum = builder.ins().imul(left, right);
+
+            // At this point we've picked up an extra 2^2 so we need
+            // to right shift it out.
+            //
+            // NOTE: It is possible that it would be more reasonable
+            // to shift things out first. I'm worried here that this
+            // will cause integer overflows where we wouldn't normally
+            // expect them.
+            builder.ins().sshr_imm(accum, 2)
+        }
+        "eq" => {
+            check_arg_len("eq", args, 2)?;
+
+            let left = emit_expr(&args[0], builder, word)?;
+            let right = emit_expr(&args[1], builder, word)?;
+
+            let accum = builder.ins().icmp(IntCC::Equal, left, right);
+            let accum = builder.ins().bint(word, accum);
+            emit_word_to_bool(accum, builder)
+        }
+
         _ => panic!("non primitive in emit_primcall: {}", name),
     })
 }
@@ -153,6 +198,10 @@ fn string_is_primitive(s: &str) -> bool {
         || s == "not"
         || s == "boolean?"
         || s == "integer?"
+        || s == "add"
+        || s == "sub"
+        || s == "mul"
+        || s == "eq"
 }
 
 fn check_arg_len(name: &str, args: &[Expr], expected: usize) -> Result<(), String> {
@@ -323,5 +372,129 @@ mod tests {
             let expected = Expr::Bool(true);
             test_evaluation(ast, expected);
         }
+    }
+
+    #[test]
+    fn add() {
+        let ast = Expr::List(vec![
+            Expr::Symbol("add".to_string()),
+            Expr::Integer(1),
+            Expr::Integer(1),
+        ]);
+        let expected = Expr::Integer(2);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![
+            Expr::Symbol("add".to_string()),
+            Expr::Integer(-1000),
+            Expr::Integer(10),
+        ]);
+        let expected = Expr::Integer(-990);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![
+            Expr::Symbol("add".to_string()),
+            Expr::Integer(1),
+            Expr::List(vec![
+                Expr::Symbol("add".to_string()),
+                Expr::Integer(-1),
+                Expr::Integer(-1),
+            ]),
+        ]);
+        let expected = Expr::Integer(-1);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn mul() {
+        let ast = Expr::List(vec![
+            Expr::Symbol("mul".to_string()),
+            Expr::Integer(1),
+            Expr::Integer(1),
+        ]);
+        let expected = Expr::Integer(1);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![
+            Expr::Symbol("mul".to_string()),
+            Expr::Integer(-1000),
+            Expr::Integer(10),
+        ]);
+        let expected = Expr::Integer(-10000);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![
+            Expr::Symbol("mul".to_string()),
+            Expr::Integer(1),
+            Expr::List(vec![
+                Expr::Symbol("add".to_string()),
+                Expr::Integer(-1),
+                Expr::Integer(-1),
+            ]),
+        ]);
+        let expected = Expr::Integer(-2);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn sub() {
+        let ast = Expr::List(vec![
+            Expr::Symbol("sub".to_string()),
+            Expr::Integer(1),
+            Expr::Integer(1),
+        ]);
+        let expected = Expr::Integer(0);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![
+            Expr::Symbol("sub".to_string()),
+            Expr::Integer(-1000),
+            Expr::Integer(10),
+        ]);
+        let expected = Expr::Integer(-1010);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![
+            Expr::Symbol("sub".to_string()),
+            Expr::Integer(1),
+            Expr::List(vec![
+                Expr::Symbol("sub".to_string()),
+                Expr::Integer(-1),
+                Expr::Integer(-1),
+            ]),
+        ]);
+        let expected = Expr::Integer(1);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn eq() {
+        let ast = Expr::List(vec![
+            Expr::Symbol("eq".to_string()),
+            Expr::Integer(1),
+            Expr::Integer(1),
+        ]);
+        let expected = Expr::Bool(true);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![
+            Expr::Symbol("eq".to_string()),
+            Expr::Char('🚨'),
+            Expr::Integer(1),
+        ]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+
+        let ast = Expr::List(vec![
+            Expr::Symbol("eq".to_string()),
+            Expr::Nil,
+            Expr::List(vec![
+                Expr::Symbol("sub".to_string()),
+                Expr::Integer(-1),
+                Expr::Integer(-1),
+            ]),
+        ]);
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
     }
 }
