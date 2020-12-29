@@ -596,4 +596,72 @@ mod tests {
         let expected = Expr::Integer(2);
         test_evaluation(ast, expected);
     }
+
+    #[test]
+    fn car_cdr_car() {
+        let ast = Expr::List(vec![
+            Expr::Symbol("car".to_string()),
+            Expr::List(vec![
+                Expr::Symbol("cdr".to_string()),
+                Expr::List(vec![
+                    Expr::Symbol("cons".to_string()),
+                    Expr::Integer(1),
+                    Expr::List(vec![
+                        Expr::Symbol("cons".to_string()),
+                        Expr::Integer(2),
+                        Expr::Integer(3),
+                    ]),
+                ]),
+            ]),
+        ]);
+        let expected = Expr::Integer(2);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn car_cdr_car_mix() {
+        let ast = Expr::List(vec![
+            Expr::Symbol("car".to_string()),
+            Expr::List(vec![
+                Expr::Symbol("cdr".to_string()),
+                Expr::List(vec![
+                    Expr::Symbol("cons".to_string()),
+                    Expr::Char('a'),
+                    Expr::List(vec![
+                        Expr::Symbol("cons".to_string()),
+                        Expr::Bool(true),
+                        Expr::Integer(2),
+                    ]),
+                ]),
+            ]),
+        ]);
+        let expected = Expr::Bool(true);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn tree() {
+        let ast = Expr::List(vec![
+            Expr::Symbol("car".to_string()),
+            Expr::List(vec![
+                Expr::Symbol("car".to_string()),
+                Expr::List(vec![
+                    Expr::Symbol("cons".to_string()),
+                    Expr::List(vec![
+                        Expr::Symbol("cons".to_string()),
+                        Expr::Bool(false),
+                        Expr::Integer(2),
+                    ]),
+                    Expr::List(vec![
+                        Expr::Symbol("cons".to_string()),
+                        Expr::Bool(true),
+                        Expr::Integer(2),
+                    ]),
+                ]),
+            ]),
+        ]);
+
+        let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+    }
 }
