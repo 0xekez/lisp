@@ -1,7 +1,7 @@
 use cranelift::prelude::*;
-use std::collections::HashMap;
 
 use crate::compiler::emit_expr;
+use crate::compiler::Context;
 use crate::Expr;
 
 impl Expr {
@@ -28,37 +28,27 @@ impl Expr {
     }
 }
 
-pub fn emit_let(
-    name: &str,
-    val: &Expr,
-    builder: &mut FunctionBuilder,
-    word: Type,
-    env: &mut HashMap<String, Variable>,
-) -> Result<Value, String> {
-    if let Some(_) = env.get(name) {
+pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Value, String> {
+    if let Some(_) = ctx.env.get(name) {
         return Err(format!("variable {} is declared more than once", name));
     }
 
-    let val = emit_expr(val, builder, word, env)?;
-    let index = env.len();
+    let val = emit_expr(val, ctx)?;
+    let index = ctx.env.len();
 
     let var = Variable::new(index);
     // Declare its type.
-    builder.declare_var(var, word);
+    ctx.builder.declare_var(var, ctx.word);
     // Set its value.
-    builder.def_var(var, val);
-    env.insert(name.to_string(), var);
+    ctx.builder.def_var(var, val);
+    ctx.env.insert(name.to_string(), var);
 
-    Ok(builder.use_var(var))
+    Ok(ctx.builder.use_var(var))
 }
 
-pub fn emit_var_access(
-    name: &str,
-    builder: &mut FunctionBuilder,
-    env: &mut HashMap<String, Variable>,
-) -> Result<Value, String> {
-    match env.get(name) {
-        Some(v) => Ok(builder.use_var(*v)),
+pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, String> {
+    match ctx.env.get(name) {
+        Some(v) => Ok(ctx.builder.use_var(*v)),
         None => Err(format!("use of undeclared variable: {}", name)),
     }
 }

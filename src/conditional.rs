@@ -1,7 +1,7 @@
 use cranelift::prelude::*;
-use std::collections::HashMap;
 
 use crate::compiler::emit_expr;
+use crate::compiler::Context;
 use crate::Expr;
 
 impl Expr {
@@ -23,55 +23,54 @@ impl Expr {
     }
 }
 
-pub fn emit_conditional(
+pub(crate) fn emit_conditional(
     cond: &Expr,
     then: &Expr,
     else_: &Expr,
-    builder: &mut FunctionBuilder,
-    word: Type,
-    env: &mut HashMap<String, Variable>,
+    ctx: &mut Context,
 ) -> Result<Value, String> {
-    let cond = emit_expr(cond, builder, word, env)?;
-    let cond = builder
+    let cond = emit_expr(cond, ctx)?;
+    let cond = ctx
+        .builder
         .ins()
         .icmp_imm(IntCC::Equal, cond, Expr::Bool(true).immediate_rep());
 
-    let then_block = builder.create_block();
-    let else_block = builder.create_block();
-    let merge_block = builder.create_block();
+    let then_block = ctx.builder.create_block();
+    let else_block = ctx.builder.create_block();
+    let merge_block = ctx.builder.create_block();
 
     // Our if-else blocks have a return value. Cranelift has no PHI
     // form so instead of using a PHI we use a merge block that each
     // of the then and else blocks jump to with their return value.
-    builder.append_block_param(merge_block, word);
+    ctx.builder.append_block_param(merge_block, ctx.word);
 
     // On false, jump to the else block.
-    builder.ins().brz(cond, else_block, &[]);
+    ctx.builder.ins().brz(cond, else_block, &[]);
     // On true, "fall through"
-    builder.ins().jump(then_block, &[]);
+    ctx.builder.ins().jump(then_block, &[]);
 
     // Compile the then block.
-    builder.switch_to_block(then_block);
-    builder.seal_block(then_block);
+    ctx.builder.switch_to_block(then_block);
+    ctx.builder.seal_block(then_block);
 
-    let then_return = emit_expr(then, builder, word, env)?;
+    let then_return = emit_expr(then, ctx)?;
 
-    builder.ins().jump(merge_block, &[then_return]);
+    ctx.builder.ins().jump(merge_block, &[then_return]);
 
     // Compile the else block.
-    builder.switch_to_block(else_block);
-    builder.seal_block(else_block);
+    ctx.builder.switch_to_block(else_block);
+    ctx.builder.seal_block(else_block);
 
-    let else_return = emit_expr(else_, builder, word, env)?;
+    let else_return = emit_expr(else_, ctx)?;
 
-    builder.ins().jump(merge_block, &[else_return]);
+    ctx.builder.ins().jump(merge_block, &[else_return]);
 
     // Seal the merge block now that we've compiled all the ways to
     // reach it.
-    builder.switch_to_block(merge_block);
-    builder.seal_block(merge_block);
+    ctx.builder.switch_to_block(merge_block);
+    ctx.builder.seal_block(merge_block);
 
-    let res = builder.block_params(merge_block)[0];
+    let res = ctx.builder.block_params(merge_block)[0];
 
     Ok(res)
 }

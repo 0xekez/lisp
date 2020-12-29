@@ -1,9 +1,10 @@
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::*;
-use std::collections::HashMap;
 
 use crate::compiler::emit_expr;
+use crate::compiler::Context;
 use crate::conversions;
+use crate::heap::emit_alloc;
 use crate::Expr;
 
 // TODO: refactor to look like is_let in locals.rs
@@ -36,19 +37,13 @@ impl Expr {
     }
 }
 
-pub fn emit_primcall(
-    name: &str,
-    args: &[Expr],
-    builder: &mut FunctionBuilder,
-    word: Type,
-    env: &mut HashMap<String, Variable>,
-) -> Result<Value, String> {
+pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Result<Value, String> {
     debug_assert!(string_is_primitive(name));
     Ok(match name {
         "add1" => {
             check_arg_len("add1", args, 1)?;
-            let accum = emit_expr(&args[0], builder, word, env)?;
-            builder
+            let accum = emit_expr(&args[0], ctx)?;
+            ctx.builder
                 .ins()
                 .iadd_imm(accum, Expr::Integer(1).immediate_rep())
         }
@@ -57,9 +52,9 @@ pub fn emit_primcall(
 
             // To convert an integer to a character we left shift by 6
             // and then tag it with the character tag.
-            let accum = emit_expr(&args[0], builder, word, env)?;
-            let accum = builder.ins().ishl_imm(accum, 6);
-            let accum = builder.ins().bor_imm(accum, conversions::CHAR_TAG);
+            let accum = emit_expr(&args[0], ctx)?;
+            let accum = ctx.builder.ins().ishl_imm(accum, 6);
+            let accum = ctx.builder.ins().bor_imm(accum, conversions::CHAR_TAG);
             accum
         }
         "char->integer" => {
@@ -71,96 +66,99 @@ pub fn emit_primcall(
             // NOTE: We're skipping some of the work here because
             // we're assuming the input is an integer and as such
             // there is no need to tag after the right shift.
-            let accum = emit_expr(&args[0], builder, word, env)?;
-            let accum = builder.ins().ushr_imm(accum, 6);
+            let accum = emit_expr(&args[0], ctx)?;
+            let accum = ctx.builder.ins().ushr_imm(accum, 6);
             accum
         }
         "null?" => {
             check_arg_len("null?", args, 1)?;
-            let accum = emit_expr(&args[0], builder, word, env)?;
-            let accum = builder
+            let accum = emit_expr(&args[0], ctx)?;
+            let accum = ctx
+                .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::NIL_VALUE);
             // The result of this comparason is a boolean value so we
-            // need to convert it back to a word before working on it.
-            let accum = builder.ins().bint(word, accum);
-            emit_word_to_bool(accum, builder)
+            // need to convert it back to a ctx.word before working on it.
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            emit_word_to_bool(accum, &mut ctx.builder)
         }
         "zero?" => {
             check_arg_len("zero?", args, 1)?;
 
-            let accum = emit_expr(&args[0], builder, word, env)?;
+            let accum = emit_expr(&args[0], ctx)?;
             let accum =
-                builder
+                ctx.builder
                     .ins()
                     .icmp_imm(IntCC::Equal, accum, Expr::Integer(0).immediate_rep());
-            let accum = builder.ins().bint(word, accum);
-            emit_word_to_bool(accum, builder)
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            emit_word_to_bool(accum, &mut ctx.builder)
         }
         "not" => {
             check_arg_len("not", args, 1)?;
 
-            let accum = emit_expr(&args[0], builder, word, env)?;
+            let accum = emit_expr(&args[0], ctx)?;
 
             // To get the not of a boolean, subtract one from it and
             // then take the absolute value.
-            let accum = builder.ins().sshr_imm(accum, conversions::BOOL_SHIFT);
-            let accum = builder.ins().iadd_imm(accum, -1);
+            let accum = ctx.builder.ins().sshr_imm(accum, conversions::BOOL_SHIFT);
+            let accum = ctx.builder.ins().iadd_imm(accum, -1);
             // FIXME: there is some serious black magic surrounding
             // why we don't need to take the absolute value
             // here. Taking the absolute value causes a compilation
             // error when cranelift is verifying things.
-            // let accum = builder.ins().iabs(accum);
-            emit_word_to_bool(accum, builder)
+            // let accum = ctx.builder.ins().iabs(accum);
+            emit_word_to_bool(accum, &mut ctx.builder)
         }
         "integer?" => {
             check_arg_len("integer?", args, 1)?;
 
-            let accum = emit_expr(&args[0], builder, word, env)?;
+            let accum = emit_expr(&args[0], ctx)?;
 
-            let accum = builder.ins().band_imm(accum, conversions::FIXNUM_MASK);
-            let accum = builder
+            let accum = ctx.builder.ins().band_imm(accum, conversions::FIXNUM_MASK);
+            let accum = ctx
+                .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::FIXNUM_TAG);
-            let accum = builder.ins().bint(word, accum);
-            emit_word_to_bool(accum, builder)
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            emit_word_to_bool(accum, &mut ctx.builder)
         }
         "boolean?" => {
             check_arg_len("boolean?", args, 1)?;
 
-            let accum = emit_expr(&args[0], builder, word, env)?;
+            let accum = emit_expr(&args[0], ctx)?;
 
-            let accum = builder.ins().band_imm(accum, conversions::BOOL_MASK);
-            let accum = builder
+            let accum = ctx.builder.ins().band_imm(accum, conversions::BOOL_MASK);
+            let accum = ctx
+                .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::BOOL_TAG);
-            let accum = builder.ins().bint(word, accum);
-            emit_word_to_bool(accum, builder)
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            emit_word_to_bool(accum, &mut ctx.builder)
         }
         "add" => {
             check_arg_len("add", args, 2)?;
 
-            let left = emit_expr(&args[0], builder, word, env)?;
-            let right = emit_expr(&args[1], builder, word, env)?;
+            let left = emit_expr(&args[0], ctx)?;
+            let right = emit_expr(&args[1], ctx)?;
 
-            builder.ins().iadd(left, right)
+            ctx.builder.ins().iadd(left, right)
         }
         "sub" => {
             check_arg_len("sub", args, 2)?;
 
-            let left = emit_expr(&args[0], builder, word, env)?;
-            let right = emit_expr(&args[1], builder, word, env)?;
-            let right = builder.ins().ineg(right);
+            let left = emit_expr(&args[0], ctx)?;
+            let right = emit_expr(&args[1], ctx)?;
+            let right = ctx.builder.ins().ineg(right);
 
-            builder.ins().iadd(left, right)
+            ctx.builder.ins().iadd(left, right)
         }
         "mul" => {
             check_arg_len("mul", args, 2)?;
 
-            let left = emit_expr(&args[0], builder, word, env)?;
-            let right = emit_expr(&args[1], builder, word, env)?;
+            let left = emit_expr(&args[0], ctx)?;
+            let right = emit_expr(&args[1], ctx)?;
 
-            let accum = builder.ins().imul(left, right);
+            let accum = ctx.builder.ins().imul(left, right);
 
             // At this point we've picked up an extra 2^2 so we need
             // to right shift it out.
@@ -169,19 +167,33 @@ pub fn emit_primcall(
             // to shift things out first. I'm worried here that this
             // will cause integer overflows where we wouldn't normally
             // expect them.
-            builder.ins().sshr_imm(accum, 2)
+            ctx.builder.ins().sshr_imm(accum, 2)
         }
         "eq" => {
             check_arg_len("eq", args, 2)?;
 
-            let left = emit_expr(&args[0], builder, word, env)?;
-            let right = emit_expr(&args[1], builder, word, env)?;
+            let left = emit_expr(&args[0], ctx)?;
+            let right = emit_expr(&args[1], ctx)?;
 
-            let accum = builder.ins().icmp(IntCC::Equal, left, right);
-            let accum = builder.ins().bint(word, accum);
-            emit_word_to_bool(accum, builder)
+            let accum = ctx.builder.ins().icmp(IntCC::Equal, left, right);
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            emit_word_to_bool(accum, &mut ctx.builder)
         }
+        "cons" => {
+            check_arg_len("cons", args, 2)?;
 
+            let data = emit_expr(&args[0], ctx)?;
+            let next = emit_expr(&args[1], ctx)?;
+
+            let storage = emit_alloc((ctx.word.bytes() * 2).into(), ctx)?;
+
+            ctx.builder.ins().store(MemFlags::new(), data, storage, 0);
+            ctx.builder
+                .ins()
+                .store(MemFlags::new(), next, storage, ctx.word.bytes() as i32);
+
+            storage
+        }
         _ => panic!("non primitive in emit_primcall: {}", name),
     })
 }
@@ -205,6 +217,7 @@ fn string_is_primitive(s: &str) -> bool {
         || s == "sub"
         || s == "mul"
         || s == "eq"
+        || s == "cons"
 }
 
 fn check_arg_len(name: &str, args: &[Expr], expected: usize) -> Result<(), String> {
