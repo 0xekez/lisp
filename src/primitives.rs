@@ -135,6 +135,22 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let accum = ctx.builder.ins().bint(ctx.word, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
+        "pair?" => {
+            check_arg_len("pair?", args, 1)?;
+
+            let accum = emit_expr(&args[0], ctx)?;
+
+            let accum = ctx
+                .builder
+                .ins()
+                .band_imm(accum, conversions::HEAP_TAG_MASK);
+            let accum = ctx
+                .builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::PAIR_TAG);
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            emit_word_to_bool(accum, &mut ctx.builder)
+        }
         "add" => {
             check_arg_len("add", args, 2)?;
 
@@ -192,7 +208,27 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
                 .ins()
                 .store(MemFlags::new(), next, storage, ctx.word.bytes() as i32);
 
-            storage
+            ctx.builder.ins().bor_imm(storage, conversions::PAIR_TAG)
+        }
+        "car" => {
+            check_arg_len("car", args, 1)?;
+
+            let pair = emit_expr(&args[0], ctx)?;
+            let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
+
+            ctx.builder
+                .ins()
+                .load(ctx.word, MemFlags::new(), address, 0)
+        }
+        "cdr" => {
+            check_arg_len("cdr", args, 1)?;
+
+            let pair = emit_expr(&args[0], ctx)?;
+            let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
+
+            ctx.builder
+                .ins()
+                .load(ctx.word, MemFlags::new(), address, ctx.word.bytes() as i32)
         }
         _ => panic!("non primitive in emit_primcall: {}", name),
     })
@@ -213,11 +249,14 @@ fn string_is_primitive(s: &str) -> bool {
         || s == "not"
         || s == "boolean?"
         || s == "integer?"
+        || s == "pair?"
         || s == "add"
         || s == "sub"
         || s == "mul"
         || s == "eq"
         || s == "cons"
+        || s == "car"
+        || s == "cdr"
 }
 
 fn check_arg_len(name: &str, args: &[Expr], expected: usize) -> Result<(), String> {
@@ -511,6 +550,50 @@ mod tests {
             ]),
         ]);
         let expected = Expr::Bool(false);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn is_pair() {
+        let ast = Expr::List(vec![
+            Expr::Symbol("pair?".to_string()),
+            Expr::List(vec![
+                Expr::Symbol("cons".to_string()),
+                Expr::Integer(-1),
+                Expr::Integer(-1),
+            ]),
+        ]);
+        let expected = Expr::Bool(true);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn car() {
+        let ast = Expr::List(vec![
+            Expr::Symbol("car".to_string()),
+            Expr::List(vec![
+                Expr::Symbol("cons".to_string()),
+                Expr::Integer(-1),
+                Expr::Integer(2),
+            ]),
+        ]);
+
+        let expected = Expr::Integer(-1);
+        test_evaluation(ast, expected);
+    }
+
+    #[test]
+    fn cdr() {
+        let ast = Expr::List(vec![
+            Expr::Symbol("cdr".to_string()),
+            Expr::List(vec![
+                Expr::Symbol("cons".to_string()),
+                Expr::Integer(-1),
+                Expr::Integer(2),
+            ]),
+        ]);
+
+        let expected = Expr::Integer(2);
         test_evaluation(ast, expected);
     }
 }

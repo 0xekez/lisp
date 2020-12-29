@@ -16,12 +16,12 @@ pub(crate) static NIL_VALUE: Word = 0b00101111;
 
 /// Values on the heap use their last three bits (values 0..7) to
 /// store their type tag. The tag mask extracts that tag value.
-static HEAP_TAG_MASK: Word = 0b111;
+pub(crate) static HEAP_TAG_MASK: Word = 0b111;
 /// In order to get the actual pointer that a value on the heap points
 /// to we use the inverse of ptr mask which zeros out the heap tag.
-static HEAP_PTR_MASK: Word = !HEAP_TAG_MASK;
+pub(crate) static HEAP_PTR_MASK: Word = !HEAP_TAG_MASK;
 
-static PAIR_TAG: Word = 0b001;
+pub(crate) static PAIR_TAG: Word = 0b001;
 
 pub fn word_is_char(what: Word) -> bool {
     what & CHAR_MASK == CHAR_TAG
@@ -48,7 +48,11 @@ pub fn word_is_object(what: Word) -> bool {
 }
 
 pub fn word_is_immediate(what: Word) -> bool {
-    word_is_int(what) || word_is_char(what) || word_is_bool(what) || word_is_nil(what)
+    word_is_int(what)
+        || word_is_char(what)
+        || word_is_bool(what)
+        || word_is_nil(what)
+        || word_is_pair(what)
 }
 
 pub fn word_get_object_address(what: Word) -> UWord {
@@ -75,6 +79,7 @@ impl Expr {
     pub fn from_immediate(what: Word) -> Expr {
         debug_assert!(word_is_immediate(what), "expected immediate type");
         match () {
+            _ if word_is_pair(what) => Expr::List(vec![]),
             _ if word_is_int(what) => Expr::Integer(what >> FIXNUM_SHIFT),
             _ if word_is_char(what) => {
                 Expr::Char(unsafe { std::mem::transmute_copy(&(what >> CHAR_SHIFT)) })
