@@ -33,7 +33,13 @@ impl crate::parser::Expr {
         match self.val {
             ExprVal::Number(i) => Expr::Integer(i),
             ExprVal::Id(s) => Expr::Symbol(s),
-            ExprVal::List(v) => Expr::List(v.into_iter().map(|e| e.into_expr()).collect()),
+            ExprVal::List(v) => {
+                if v.is_empty() {
+                    Expr::Nil
+                } else {
+                    Expr::List(v.into_iter().map(|e| e.into_expr()).collect())
+                }
+            }
             ExprVal::String(s) => {
                 Expr::List(s.chars().into_iter().map(|c| Expr::Char(c)).collect())
             }
@@ -61,13 +67,22 @@ pub fn roundtrip_string(input: &str) -> Result<Expr, String> {
     crate::compiler::roundtrip_exprs(&exprs)
 }
 
+pub fn roundtrip_file(name: &str) -> Result<Expr, String> {
+    let contents = std::fs::read_to_string(name).map_err(|e| e.to_string())?;
+    roundtrip_string(&contents)
+}
+
 /// Some more general tests that test the entire pipeline.
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_evaluation(input: &str, expected: Expr) {
+    fn test_string_evaluation(input: &str, expected: Expr) {
         assert_eq!(roundtrip_string(input).unwrap(), expected)
+    }
+
+    fn test_file_evaluation(filename: &str, expected: Expr) {
+        assert_eq!(roundtrip_file(filename).unwrap(), expected)
     }
 
     #[test]
@@ -83,7 +98,7 @@ mod tests {
 (eq six also-six)
 "#;
         let expected = Expr::Bool(true);
-        test_evaluation(input, expected);
+        test_string_evaluation(input, expected);
     }
 
     #[test]
@@ -93,6 +108,18 @@ mod tests {
 (add1 🚨)
 "#;
         let expected = Expr::Integer(42);
-        test_evaluation(input, expected);
+        test_string_evaluation(input, expected);
+    }
+
+    #[test]
+    fn primitives_file() {
+        let expected = Expr::Bool(true);
+        test_file_evaluation("examples/primitives.lisp", expected)
+    }
+
+    #[test]
+    fn cons_file() {
+        let expected = Expr::Integer(10);
+        test_file_evaluation("examples/cons.lisp", expected)
     }
 }

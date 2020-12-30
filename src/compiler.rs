@@ -78,7 +78,7 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
             } else if let Some((cond, then, else_)) = expr.is_conditional() {
                 conditional::emit_conditional(cond, then, else_, ctx)?
             } else {
-                todo!("unsupported function application")
+                todo!("unsupported function application: {:?}", v)
             }
         }
     })

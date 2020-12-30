@@ -1,5 +1,5 @@
 [package]
-name = "lustcompiler"
+name = "lustc"
 version = "0.1.0"
 authors = ["Zeke Medley <zekemedley@gmail.com>"]
 edition = "2018"

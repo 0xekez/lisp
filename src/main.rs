@@ -1,7 +1,13 @@
-fn main() {
-    let input = "(add1 25)";
+use std::env;
 
-    let res = lustcompiler::roundtrip_string(&input);
+fn main() {
+    let args: Vec<_> = env::args().collect();
+    if args.len() != 2 {
+        println!("usage: lustc <file>");
+        return;
+    }
+
+    let res = lustc::roundtrip_file(&args[1]);
 
     println!("=> {:?}", res);
 }
