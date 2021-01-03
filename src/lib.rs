@@ -7,6 +7,7 @@ pub mod locals;
 pub mod location;
 pub mod parser;
 pub mod primitives;
+pub mod procedures;
 pub mod reader;
 pub mod tokenbuffer;
 pub mod tokenizer;

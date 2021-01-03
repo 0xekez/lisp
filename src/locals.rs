@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use cranelift::prelude::*;
 
 use crate::compiler::emit_expr;
@@ -34,14 +36,8 @@ pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Valu
     }
 
     let val = emit_expr(val, ctx)?;
-    let index = ctx.env.len();
 
-    let var = Variable::new(index);
-    // Declare its type.
-    ctx.builder.declare_var(var, ctx.word);
-    // Set its value.
-    ctx.builder.def_var(var, val);
-    ctx.env.insert(name.to_string(), var);
+    let var = emit_var_decl(name, val, &mut ctx.env, &mut ctx.builder, ctx.word)?;
 
     Ok(ctx.builder.use_var(var))
 }
@@ -51,6 +47,24 @@ pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, St
         Some(v) => Ok(ctx.builder.use_var(*v)),
         None => Err(format!("use of undeclared variable: {}", name)),
     }
+}
+
+pub(crate) fn emit_var_decl(
+    name: &str,
+    val: Value,
+    env: &mut HashMap<String, Variable>,
+    builder: &mut FunctionBuilder,
+    word: Type,
+) -> Result<Variable, String> {
+    if env.contains_key(name) {
+        return Err(format!("variable {} is declared more than once", name));
+    }
+    let index = env.len();
+    let var = Variable::new(index);
+    builder.declare_var(var, word);
+    builder.def_var(var, val);
+    env.insert(name.to_string(), var);
+    Ok(var)
 }
 
 #[cfg(test)]

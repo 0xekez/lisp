@@ -4,6 +4,7 @@ use crate::conditional;
 use crate::heap::define_alloc;
 use crate::locals;
 use crate::primitives;
+use crate::procedures;
 use crate::Expr;
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::*;
@@ -77,6 +78,8 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
                 locals::emit_let(s, e, ctx)?
             } else if let Some((cond, then, else_)) = expr.is_conditional() {
                 conditional::emit_conditional(cond, then, else_, ctx)?
+            } else if let Some((name, args)) = expr.is_fncall() {
+                procedures::emit_fncall(name, args, ctx)?
             } else {
                 todo!("unsupported function application: {:?}", v)
             }
@@ -199,6 +202,9 @@ pub fn roundtrip_exprs(exprs: &[Expr]) -> Result<Expr, String> {
     jit.module
         .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
         .map_err(|e| e.to_string())?;
+
+    // If you want to dump the generated IR this is the way:
+    // println!("{}", jit.context.func.display(jit.module.isa()));
 
     jit.module.clear_context(&mut jit.context);
 
