@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::compiler::{emit_expr, JIT};
 use crate::locals::emit_var_access;
 use crate::locals::emit_var_decl;
+use crate::primitives::string_is_primitive;
 use crate::Expr;
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
@@ -40,6 +42,8 @@ impl Expr {
         return None;
     }
 
+    /// Collects a list of symbols from an expression. Used for
+    /// collecting arguments to a function.
     fn collect_list_of_symbols(expr: &Expr) -> Option<Vec<&String>> {
         if let Self::List(v) = expr {
             let mut res = Vec::with_capacity(v.len());
@@ -188,6 +192,8 @@ pub(crate) struct LustFn {
     pub params: Vec<String>,
     /// The body of the function.
     pub body: Vec<Expr>,
+    /// Variables that need to be captured in this function's closure.
+    pub free_variables: Vec<String>,
 }
 
 /// Collects all of the anonymous functions in a program and returns a
@@ -202,6 +208,7 @@ pub(crate) fn collect_functions(program: &[Expr]) -> Vec<LustFn> {
                     name: format!("__anon_fn_{}", res.len()),
                     params: params.iter().map(|&s| s.clone()).collect(),
                     body: body.iter().map(|e| e.clone()).collect(),
+                    free_variables: vec![],
                 })
             }
         })
@@ -250,6 +257,69 @@ pub(crate) fn replace_functions(program: &mut [Expr], functions: &mut [LustFn]) 
     }
 }
 
+/// Collects the bound and unbound variables in E into two sets and
+/// returns them in a tuple (bound, unbound).
+fn analyze_variables(e: &Expr) -> (HashSet<&String>, HashSet<&String>) {
+    let mut bound = HashSet::new();
+    let mut free = HashSet::new();
+
+    if let Some((name, binding)) = e.is_let() {
+        bound.insert(name);
+        let (newbound, newfree) = analyze_variables(binding);
+        bound.extend(newbound);
+        // Extend with the free variables found that do not have
+        // bindings.
+        free.extend(newfree.difference(&bound));
+    } else if let Some((params, body)) = e.is_fndef() {
+        // Variables that are bound in this function.
+        let mut fn_bound: HashSet<&String> = params.into_iter().collect();
+
+        for e in body {
+            let (newbound, newfree) = analyze_variables(e);
+            fn_bound.extend(newbound);
+            let newfree: HashSet<&String> = newfree.difference(&fn_bound).map(|&x| x).collect();
+            free.extend(newfree.difference(&bound));
+        }
+    } else if let Expr::Symbol(s) = e {
+        // If isn't really a "primitive" in the string_is_primitive
+        // sense so its seperated. If this becomes a common hack then
+        // it's probably worthwhile to write some sort of
+        // "string_is_builtin" method that also would include `let`
+        // and `fn` which ought to be caught above.
+        if !string_is_primitive(s) && s != "if" && !bound.contains(s) {
+            free.insert(s);
+        }
+    } else if let Expr::List(v) = e {
+        for e in v {
+            let (newbound, newfree) = analyze_variables(e);
+            bound.extend(newbound);
+            // Extend with the free variables found that do not have
+            // bindings.
+            free.extend(newfree.difference(&bound));
+        }
+    }
+
+    (bound, free)
+}
+
+/// A symbol in a let expression is bound for the remainder of the
+/// current scope. A symbol is a function's arguments is bound for the
+/// remainder of the current scope.
+pub(crate) fn annotate_free_variables(f: &mut LustFn) {
+    let mut bound: HashSet<&String> = f.params.iter().collect();
+    let mut free = HashSet::<&String>::new();
+
+    for e in &f.body {
+        let (newbound, newfree) = analyze_variables(e);
+        bound.extend(newbound);
+        // Extend with the free variables found that do not have
+        // bindings.
+        free.extend(newfree.difference(&bound));
+    }
+
+    f.free_variables = free.into_iter().cloned().collect();
+}
+
 #[cfg(test)]
 mod tests {
     use crate::errors::Printable;
@@ -258,6 +328,51 @@ mod tests {
     use crate::roundtrip_string;
 
     use super::*;
+
+    #[test]
+    fn test_free_annotation() {
+        let source = r#"
+(let dog 10)
+(let cat 11)
+(let foo (fn (a b)
+            (let bar (fn (c)
+                          (foo b (add c a))))
+            (if (bar dog) cat dog)))
+
+"#;
+        let mut parser = Parser::new(source);
+        let mut exprs = Vec::new();
+        while parser.has_more() {
+            let res = parser.parse_expr();
+
+            for e in &res.errors {
+                e.show(source, "anonymous");
+            }
+            if res.errors.is_empty() {
+                let expr = res.expr.unwrap();
+                exprs.push(expr.into_expr());
+            } else {
+                panic!("parse error!".to_string());
+            }
+        }
+
+        let mut functions = collect_functions(&exprs);
+        for mut f in &mut functions {
+            annotate_free_variables(&mut f)
+        }
+        assert_eq!(functions.len(), 2);
+        replace_functions(&mut exprs, &mut functions);
+
+        // depth first traversal should mean functions[0] is bar
+        let expected = vec!["a".to_string(), "b".to_string(), "foo".to_string()];
+        functions[0].free_variables.sort();
+        assert_eq!(expected, functions[0].free_variables);
+
+        // depth first traversal should mean functions[1] is foo
+        let expected = vec!["cat".to_string(), "dog".to_string(), "foo".to_string()];
+        functions[1].free_variables.sort();
+        assert_eq!(expected, functions[1].free_variables)
+    }
 
     #[test]
     fn test_replace_functions() {

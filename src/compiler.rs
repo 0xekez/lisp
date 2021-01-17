@@ -12,8 +12,8 @@ use cranelift_module::{Linkage, Module};
 use cranelift_simplejit::{SimpleJITBuilder, SimpleJITModule};
 use procedures::emit_procedure;
 
-/// Manages the state needed for compilation and execution of a
-/// program.
+/// Manages the state needed for compilation by cranelift and
+/// execution of a program.
 pub struct JIT {
     /// Context for building functions. Holds state that is cleared
     /// between functions so that we don't have to allocate new data
@@ -27,12 +27,15 @@ pub struct JIT {
     pub module: SimpleJITModule,
 }
 
+/// Manages the state needed for compilation of a function by lustc.
 pub(crate) struct Context<'a> {
     pub builder: FunctionBuilder<'a>,
     pub module: &'a mut SimpleJITModule,
     pub word: types::Type,
     pub env: HashMap<String, Variable>,
-    /// Maps function names to the number of arguments they take.
+    /// Maps function names to the number of arguments they take. Used
+    /// to construct function calls which need to know their argument
+    /// count.
     pub argmap: HashMap<String, u8>,
 }
 
@@ -103,6 +106,13 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     // names. There is some cool manuvering here that happens to make
     // sure that the bodies of the collected functions are updated.
     let mut functions = procedures::collect_functions(program);
+    // Annotation needs to happen before replacement so that we can
+    // traverse the body of nested functions for free variables that
+    // outer functions need to caputre.
+    for mut f in &mut functions {
+        procedures::annotate_free_variables(&mut f);
+    }
+
     procedures::replace_functions(program, &mut functions);
     let argmap = procedures::build_arg_count_map(&functions);
 

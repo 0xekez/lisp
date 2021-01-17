@@ -8,7 +8,8 @@ use crate::compiler::Context;
 use crate::Expr;
 
 impl Expr {
-    // Nice lifetime inference!
+    /// Determines if the expression is a let expression and if it is
+    /// returns the name and expression being bound.
     pub fn is_let(&self) -> Option<(&String, &Expr)> {
         match self {
             Self::List(v) => {
