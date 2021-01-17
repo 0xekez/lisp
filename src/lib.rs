@@ -48,6 +48,35 @@ impl crate::parser::Expr {
     }
 }
 
+impl Expr {
+    pub(crate) fn depth_first_traverse<F>(&self, f: &mut F)
+    where
+        F: FnMut(&Expr),
+    {
+        match self {
+            Expr::List(v) => {
+                for e in v {
+                    e.depth_first_traverse(f);
+                }
+                f(self);
+            }
+            _ => f(self),
+        }
+    }
+
+    pub(crate) fn depth_first_traverse_mut<F>(&mut self, f: &mut F)
+    where
+        F: FnMut(&mut Expr),
+    {
+        if let Expr::List(v) = self {
+            for e in v {
+                e.depth_first_traverse_mut(f);
+            }
+        }
+        f(self);
+    }
+}
+
 pub fn roundtrip_string(input: &str) -> Result<Expr, String> {
     let mut parser = Parser::new(input);
     let mut exprs = Vec::new();
@@ -65,7 +94,7 @@ pub fn roundtrip_string(input: &str) -> Result<Expr, String> {
         }
     }
 
-    crate::compiler::roundtrip_exprs(&exprs)
+    crate::compiler::roundtrip_program(&mut exprs)
 }
 
 pub fn roundtrip_file(name: &str) -> Result<Expr, String> {

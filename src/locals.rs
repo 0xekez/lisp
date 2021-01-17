@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use cranelift::prelude::*;
+use cranelift_module::{Linkage, Module};
 
 use crate::compiler::emit_expr;
 use crate::compiler::Context;
@@ -43,9 +44,32 @@ pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Valu
 }
 
 pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, String> {
-    match ctx.env.get(name) {
-        Some(v) => Ok(ctx.builder.use_var(*v)),
-        None => Err(format!("use of undeclared variable: {}", name)),
+    if name.starts_with("__anon_fn_") {
+        let argcount = ctx
+            .argmap
+            .get(name)
+            .ok_or(format!("internal error finding arg count for {}", name))?;
+        let mut sig = ctx.module.make_signature();
+        for _ in 0..*argcount {
+            sig.params.push(AbiParam::new(ctx.word));
+        }
+        sig.returns.push(AbiParam::new(ctx.word));
+
+        let callee = ctx
+            .module
+            .declare_function(name, Linkage::Local, &sig)
+            .map_err(|e| e.to_string())?;
+
+        let local_callee = ctx
+            .module
+            .declare_func_in_func(callee, &mut ctx.builder.func);
+
+        Ok(ctx.builder.ins().func_addr(ctx.word, local_callee))
+    } else {
+        match ctx.env.get(name) {
+            Some(v) => Ok(ctx.builder.use_var(*v)),
+            None => Err(format!("use of undeclared variable: {}", name)),
+        }
     }
 }
 
