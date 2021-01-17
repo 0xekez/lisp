@@ -32,13 +32,14 @@ impl Expr {
 }
 
 pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Value, String> {
-    if let Some(_) = ctx.env.get(name) {
-        return Err(format!("variable {} is declared more than once", name));
-    }
-
     let val = emit_expr(val, ctx)?;
 
-    let var = emit_var_decl(name, val, &mut ctx.env, &mut ctx.builder, ctx.word)?;
+    let var = if let Some(var) = ctx.env.get(name) {
+        ctx.builder.def_var(*var, val);
+        *var
+    } else {
+        emit_var_decl(name, val, &mut ctx.env, &mut ctx.builder, ctx.word)?
+    };
 
     Ok(ctx.builder.use_var(var))
 }
@@ -251,8 +252,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "variable twice is declared more than once")]
-    fn illegal_redef() {
+    fn var_redef() {
         let ast = [
             Expr::List(vec![
                 Expr::Symbol("let".to_string()),
