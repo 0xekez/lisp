@@ -3,11 +3,10 @@
 Lust is reasonably small Lisp built on a small, solid core. Here's an example
 REPL session:
 
-```
+```lisp
 >> (import 'format)
->> (let 'say-hello (fn (name)
-                    (printf "hello {}!" name)))
-=> (fn (name) (printf (quote "hello {}!") name))
+>> (let say-hello (fn (name)
+                      (printf "hello {}!" name)))
 >> (say-hello "Lust")
 hello Lust!
 ```
