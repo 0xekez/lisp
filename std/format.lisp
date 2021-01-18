@@ -5,16 +5,16 @@
 (import 'listutils)
 
 ;; Printf in Lust!
-(let 'printf (fn (lst & args)
+(let printf (fn (lst & args)
 		 (when lst
 		   (do
-		    (let 'sections (split lst "{}"))
-		    (let 'helper (fn (split args)
+		    (let sections (split lst "{}"))
+		    (let helper (fn (split args)
 				     (when split
 				       (do
-					(let 's (car split))
+					(let s (car split))
 					(when s (print s))
-					(let 'a (car args))
+					(let a (car args))
 					(when a (print a))
 					(helper (cdr split) (cdr args))))))
 		    (helper sections args)

@@ -75,8 +75,8 @@ pub fn eval(args: &ConsCell, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, St
 /// Same as set above but binds the value in the local enviroment.
 pub fn let_(args: &ConsCell, env: Rc<RefCell<LustEnv>>) -> Result<CallResult, String> {
     check_arg_len("let", 2, args)?;
-    let target = Interpreter::eval_in_env(&args[0], env.clone())?;
-    let target = LustData::expect_symbol(&target)?;
+    // let target = Interpreter::eval_in_env(&args[0], env.clone())?;
+    let target = LustData::expect_symbol(&args[0])?;
     let val = Interpreter::eval_in_env(&args[1], env.clone())?;
     env.borrow_mut().insert(target.clone(), val.clone());
     Ok(CallResult::Ret(val))
