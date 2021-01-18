@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use cranelift::prelude::*;
-use cranelift_module::{Linkage, Module};
 
 use crate::compiler::emit_expr;
 use crate::compiler::Context;
+use crate::procedures::emit_make_closure;
 use crate::Expr;
 
 impl Expr {
@@ -33,40 +33,38 @@ impl Expr {
 }
 
 pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Value, String> {
+    // The variable is declared but not defined yet so it is on the letstack
+    ctx.letstack.push(name.to_string());
+
     let val = emit_expr(val, ctx)?;
 
     let var = if let Some(var) = ctx.env.get(name) {
-        ctx.builder.def_var(*var, val);
         *var
     } else {
-        emit_var_decl(name, val, &mut ctx.env, &mut ctx.builder, ctx.word)?
+        emit_declare_var(name, &mut ctx.env, &mut ctx.builder, ctx.word)?
     };
+
+    ctx.builder.def_var(var, val);
+
+    // The variable now has a value so it is no longer on the letstack.
+    ctx.letstack.pop();
 
     Ok(ctx.builder.use_var(var))
 }
 
 pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, String> {
     if name.starts_with("__anon_fn_") {
-        let argcount = ctx
-            .argmap
+        // We're dealing with a closure so we'll need to make one.
+        let free_variables = ctx
+            .fnmap
             .get(name)
-            .ok_or(format!("internal error finding arg count for {}", name))?;
-        let mut sig = ctx.module.make_signature();
-        for _ in 0..*argcount {
-            sig.params.push(AbiParam::new(ctx.word));
-        }
-        sig.returns.push(AbiParam::new(ctx.word));
+            // Need to clone because otherwise we'd have an imutable
+            // ref to something inside context here and then procede
+            // to pass a utbale reference to context to make_closure.
+            .map(|f| f.free_variables.clone())
+            .ok_or(format!("internal error: {} not found in argmap", name))?;
 
-        let callee = ctx
-            .module
-            .declare_function(name, Linkage::Local, &sig)
-            .map_err(|e| e.to_string())?;
-
-        let local_callee = ctx
-            .module
-            .declare_func_in_func(callee, &mut ctx.builder.func);
-
-        Ok(ctx.builder.ins().func_addr(ctx.word, local_callee))
+        emit_make_closure(name, &free_variables, ctx)
     } else {
         match ctx.env.get(name) {
             Some(v) => Ok(ctx.builder.use_var(*v)),
@@ -75,9 +73,8 @@ pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, St
     }
 }
 
-pub(crate) fn emit_var_decl(
+pub(crate) fn emit_declare_var(
     name: &str,
-    val: Value,
     env: &mut HashMap<String, Variable>,
     builder: &mut FunctionBuilder,
     word: Type,
@@ -88,8 +85,19 @@ pub(crate) fn emit_var_decl(
     let index = env.len();
     let var = Variable::new(index);
     builder.declare_var(var, word);
-    builder.def_var(var, val);
     env.insert(name.to_string(), var);
+    Ok(var)
+}
+
+pub(crate) fn emit_var_decl_and_assign(
+    name: &str,
+    val: Value,
+    env: &mut HashMap<String, Variable>,
+    builder: &mut FunctionBuilder,
+    word: Type,
+) -> Result<Variable, String> {
+    let var = emit_declare_var(name, env, builder, word)?;
+    builder.def_var(var, val);
     Ok(var)
 }
 

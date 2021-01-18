@@ -11,6 +11,7 @@ use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
 use cranelift_simplejit::{SimpleJITBuilder, SimpleJITModule};
 use procedures::emit_procedure;
+use procedures::LustFn;
 
 /// Manages the state needed for compilation by cranelift and
 /// execution of a program.
@@ -33,10 +34,11 @@ pub(crate) struct Context<'a> {
     pub module: &'a mut SimpleJITModule,
     pub word: types::Type,
     pub env: HashMap<String, Variable>,
-    /// Maps function names to the number of arguments they take. Used
-    /// to construct function calls which need to know their argument
-    /// count.
-    pub argmap: HashMap<String, u8>,
+    pub fnmap: HashMap<String, LustFn>,
+    // A stack of variables that are curently being defined. These
+    // variables are in a "defined but not initialized state" and
+    // closures care about this.
+    pub letstack: Vec<String>,
 }
 
 impl Default for JIT {
@@ -59,14 +61,16 @@ impl<'a> Context<'a> {
         module: &'a mut SimpleJITModule,
         word: types::Type,
         env: HashMap<String, Variable>,
-        argmap: HashMap<String, u8>,
+        fnmap: HashMap<String, LustFn>,
+        letstack: Vec<String>,
     ) -> Self {
         Self {
             builder,
             module,
             word,
             env,
-            argmap,
+            fnmap,
+            letstack,
         }
     }
 }
@@ -114,10 +118,10 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     }
 
     procedures::replace_functions(program, &mut functions);
-    let argmap = procedures::build_arg_count_map(&functions);
+    let fnmap = procedures::build_fn_map(functions);
 
-    for f in functions {
-        emit_procedure(&mut jit, &f.name, &f.params, &f.body, &argmap)?;
+    for (_, f) in &fnmap {
+        emit_procedure(&mut jit, &f.name, &f.params, &f.body, &fnmap)?;
     }
 
     let word = jit.module.target_config().pointer_type();
@@ -138,7 +142,7 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
 
     let env = HashMap::new();
 
-    let mut ctx = Context::new(builder, &mut jit.module, word, env, argmap);
+    let mut ctx = Context::new(builder, &mut jit.module, word, env, fnmap, Vec::new());
 
     let vals = program
         .iter()
@@ -209,7 +213,14 @@ pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
 
         let env = HashMap::new();
 
-        let mut ctx = Context::new(builder, &mut jit.module, word, env, HashMap::new());
+        let mut ctx = Context::new(
+            builder,
+            &mut jit.module,
+            word,
+            env,
+            HashMap::new(),
+            Vec::new(),
+        );
 
         // Compile the value and get the "output" of the instrution stored
         // in `val`.
@@ -267,7 +278,14 @@ pub fn roundtrip_exprs(exprs: &[Expr]) -> Result<Expr, String> {
 
     let env = HashMap::new();
 
-    let mut ctx = Context::new(builder, &mut jit.module, word, env, HashMap::new());
+    let mut ctx = Context::new(
+        builder,
+        &mut jit.module,
+        word,
+        env,
+        HashMap::new(),
+        Vec::new(),
+    );
 
     let vals = exprs
         .iter()

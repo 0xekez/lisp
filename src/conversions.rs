@@ -23,6 +23,8 @@ pub(crate) static HEAP_PTR_MASK: Word = !HEAP_TAG_MASK;
 
 pub(crate) static PAIR_TAG: Word = 0b001;
 
+pub(crate) static CLOSURE_TAG: Word = 0b110;
+
 pub fn word_is_char(what: Word) -> bool {
     what & CHAR_MASK == CHAR_TAG
 }

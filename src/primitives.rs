@@ -195,6 +195,28 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let accum = ctx.builder.ins().bint(ctx.word, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
+        "lt" => {
+            check_arg_len("lt", args, 2)?;
+            let left = emit_expr(&args[0], ctx)?;
+            let right = emit_expr(&args[1], ctx)?;
+
+            let accum = ctx.builder.ins().icmp(IntCC::SignedLessThan, left, right);
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            emit_word_to_bool(accum, &mut ctx.builder)
+        }
+        "gt" => {
+            check_arg_len("gt", args, 2)?;
+            let left = emit_expr(&args[0], ctx)?;
+            let right = emit_expr(&args[1], ctx)?;
+
+            let accum = ctx
+                .builder
+                .ins()
+                .icmp(IntCC::SignedGreaterThan, left, right);
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            emit_word_to_bool(accum, &mut ctx.builder)
+        }
+
         "cons" => {
             check_arg_len("cons", args, 2)?;
 
@@ -254,6 +276,8 @@ pub(crate) fn string_is_primitive(s: &str) -> bool {
         || s == "sub"
         || s == "mul"
         || s == "eq"
+        || s == "lt"
+        || s == "gt"
         || s == "cons"
         || s == "car"
         || s == "cdr"

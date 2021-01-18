@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::compiler::Context;
 use crate::compiler::{emit_expr, JIT};
+use crate::heap::emit_alloc;
 use crate::locals::emit_var_access;
-use crate::locals::emit_var_decl;
+use crate::locals::emit_var_decl_and_assign;
 use crate::primitives::string_is_primitive;
 use crate::Expr;
 use cranelift::prelude::*;
@@ -66,7 +68,7 @@ pub fn emit_procedure(
     name: &str,
     params: &[String],
     body: &[Expr],
-    argmap: &HashMap<String, u8>,
+    fnmap: &HashMap<String, LustFn>,
 ) -> Result<(), String> {
     let word = jit.module.target_config().pointer_type();
 
@@ -76,6 +78,9 @@ pub fn emit_procedure(
     for _ in params {
         jit.context.func.signature.params.push(AbiParam::new(word));
     }
+
+    // Closure argument
+    jit.context.func.signature.params.push(AbiParam::new(word));
 
     // All lust functions return the result of evaluating their last
     // expression.
@@ -92,12 +97,36 @@ pub fn emit_procedure(
 
     for (i, p) in params.iter().enumerate() {
         let val = builder.block_params(entry_block)[i];
-        emit_var_decl(p, val, &mut env, &mut builder, word)?;
+        emit_var_decl_and_assign(p, val, &mut env, &mut builder, word)?;
+    }
+
+    let closure_ptr = builder.block_params(entry_block)[params.len()];
+    let free_vars = fnmap
+        .get(name)
+        .map(|f| &f.free_variables)
+        .ok_or(format!("internal error finding free vars for {}", name))?;
+    let word_size = word.bytes();
+
+    for (i, free) in free_vars.iter().enumerate() {
+        let offset = i + 1;
+        let byte_offset = offset * (word_size as usize);
+
+        let val = builder
+            .ins()
+            .load(word, MemFlags::new(), closure_ptr, byte_offset as i32);
+
+        emit_var_decl_and_assign(free, val, &mut env, &mut builder, word)?;
     }
 
     // FIXME: ugly clone here.
-    let mut ctx =
-        crate::compiler::Context::new(builder, &mut jit.module, word, env, argmap.clone());
+    let mut ctx = Context::new(
+        builder,
+        &mut jit.module,
+        word,
+        env,
+        fnmap.clone(),
+        Vec::new(),
+    );
 
     let vals = body
         .iter()
@@ -135,11 +164,7 @@ pub fn emit_procedure(
 /// Emits a call to a function. If the name is the name of an
 /// anonymous function emits a direct call. Otherwise, emits an
 /// indirect one to the function pointed to by the argument variable.
-pub(crate) fn emit_fncall(
-    name: &str,
-    args: &[Expr],
-    ctx: &mut crate::compiler::Context,
-) -> Result<Value, String> {
+pub(crate) fn emit_fncall(name: &str, args: &[Expr], ctx: &mut Context) -> Result<Value, String> {
     let word = ctx.module.target_config().pointer_type();
 
     let mut sig = ctx.module.make_signature();
@@ -147,44 +172,39 @@ pub(crate) fn emit_fncall(
     for _ in args {
         sig.params.push(AbiParam::new(word));
     }
+    // Also push an argument which is the closure.
+    sig.params.push(AbiParam::new(word));
     sig.returns.push(AbiParam::new(word));
 
-    let args: Vec<_> = args
+    let mut args: Vec<_> = args
         .iter()
         .map(|e| emit_expr(e, ctx))
         .collect::<Result<Vec<_>, _>>()?;
 
-    if name.starts_with("__anon_fn_") {
-        // This is a direct call. We can emit a regulat call instruction.
-        let callee = ctx
-            .module
-            .declare_function(name, Linkage::Import, &sig)
-            .map_err(|e| e.to_string())?;
+    let closure_ptr = emit_var_access(name, ctx)?;
+    let closure_ptr = ctx
+        .builder
+        .ins()
+        .band_imm(closure_ptr, crate::conversions::HEAP_PTR_MASK);
 
-        let local_callee = ctx
-            .module
-            .declare_func_in_func(callee, &mut ctx.builder.func);
+    let fn_ptr = ctx
+        .builder
+        .ins()
+        .load(ctx.word, MemFlags::new(), closure_ptr, 0);
 
-        let call = ctx.builder.ins().call(local_callee, &args);
-        let res = ctx.builder.inst_results(call)[0];
+    args.push(closure_ptr);
 
-        Ok(res)
-    } else {
-        // This is an indirect call. We need to load the varaible
-        // first and then emit a call_indirect instruction.
-        let val = emit_var_access(name, ctx)?;
+    let sig_ref = ctx.builder.import_signature(sig);
 
-        let sig_ref = ctx.builder.import_signature(sig);
+    let call = ctx.builder.ins().call_indirect(sig_ref, fn_ptr, &args);
+    let res = ctx.builder.inst_results(call)[0];
 
-        let call = ctx.builder.ins().call_indirect(sig_ref, val, &args);
-        let res = ctx.builder.inst_results(call)[0];
-
-        Ok(res)
-    }
+    Ok(res)
 }
 
 /// A descriptor of an anonymous function.
-pub(crate) struct LustFn {
+#[derive(Debug, Clone)]
+pub struct LustFn {
     /// The functions name. This is always in the form
     /// __anon_fn_{number}.
     pub name: String,
@@ -217,17 +237,8 @@ pub(crate) fn collect_functions(program: &[Expr]) -> Vec<LustFn> {
     res
 }
 
-/// Builds a map between anonymous function names and their argument
-/// counts. This is used later to build function signatures when we
-/// need to perform indirect function calls as getting a reference to
-/// a function that has been defined earlier requires that we know its
-/// number of arguments. This is a cranelift constraint and not one
-/// that we add ourselves.
-pub(crate) fn build_arg_count_map(functions: &[LustFn]) -> HashMap<String, u8> {
-    functions
-        .iter()
-        .map(|f| (f.name.clone(), f.params.len() as u8))
-        .collect()
+pub(crate) fn build_fn_map(functions: Vec<LustFn>) -> HashMap<String, LustFn> {
+    functions.into_iter().map(|f| (f.name.clone(), f)).collect()
 }
 
 /// Replaces functions with their anonymous names. Takes a program and
@@ -318,6 +329,89 @@ pub(crate) fn annotate_free_variables(f: &mut LustFn) {
     }
 
     f.free_variables = free.into_iter().cloned().collect();
+}
+
+/// Emits code to allocate a closure and returns a pointer to it.
+fn emit_alloc_closure(var_count: usize, ctx: &mut Context) -> Result<Value, String> {
+    // Free variables and the function pointer.
+    let size = var_count + 1;
+    emit_alloc(size as i64, ctx)
+}
+
+fn letstack_contains(ctx: &Context, name: &str) -> bool {
+    ctx.letstack.contains(&name.to_string())
+}
+pub fn option_contains<T>(o: &Option<T>, x: T) -> bool
+where
+    T: PartialEq,
+{
+    match o {
+        Some(y) => *y == x,
+        None => false,
+    }
+}
+
+pub(crate) fn emit_make_closure(
+    fn_name: &str,
+    free_variables: &[String],
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    let closure_ptr = emit_alloc_closure(free_variables.len(), ctx)?;
+    let fn_ptr = emit_get_fn_addr(fn_name, ctx)?;
+
+    // Store the function pointer in the closure.
+    ctx.builder
+        .ins()
+        .store(MemFlags::new(), fn_ptr, closure_ptr, 0);
+
+    let word_size = ctx.word.bytes();
+
+    for (offset, free) in free_variables.iter().enumerate() {
+        let val = if letstack_contains(ctx, free) {
+            ctx.builder
+                .ins()
+                .bor_imm(closure_ptr, crate::conversions::CLOSURE_TAG)
+        } else {
+            emit_var_access(free, ctx)?
+        };
+        // let val = emit_var_access(free, ctx)?;
+        let byte_offset = (1 + (offset as u32)) * word_size;
+
+        // Store the value in the closure.
+        ctx.builder
+            .ins()
+            .store(MemFlags::new(), val, closure_ptr, byte_offset as i32);
+    }
+
+    // Tag the closure pointer
+    Ok(ctx
+        .builder
+        .ins()
+        .bor_imm(closure_ptr, crate::conversions::CLOSURE_TAG))
+}
+
+pub(crate) fn emit_get_fn_addr(name: &str, ctx: &mut Context) -> Result<Value, String> {
+    let argcount = ctx
+        .fnmap
+        .get(name)
+        .map(|f| f.params.len() + 1)
+        .ok_or(format!("internal error finding arg count for {}", name))?;
+    let mut sig = ctx.module.make_signature();
+    for _ in 0..argcount {
+        sig.params.push(AbiParam::new(ctx.word));
+    }
+    sig.returns.push(AbiParam::new(ctx.word));
+
+    let callee = ctx
+        .module
+        .declare_function(name, Linkage::Local, &sig)
+        .map_err(|e| e.to_string())?;
+
+    let local_callee = ctx
+        .module
+        .declare_func_in_func(callee, &mut ctx.builder.func);
+
+    Ok(ctx.builder.ins().func_addr(ctx.word, local_callee))
 }
 
 #[cfg(test)]
@@ -459,30 +553,15 @@ mod tests {
     }
 
     #[test]
-    fn indirect_functions() {
-        let source = r#"
-(let fact (fn (n)
-              (if (eq n 1)
-                  1
-                 (mul n (__anon_fn_0 (sub n 1))))))
-(fact 14)
-"#;
-        let res = roundtrip_string(source).unwrap();
-        assert_eq!(res, Expr::Integer(87178291200))
-    }
-
-    #[test]
     fn multiple_expr_body() {
         let source = r#"
 (let fact (fn (n)
-              (let continue (eq n 1))
-              (if continue
-                  1
-                 (mul n (__anon_fn_0 (sub n 1))))))
+              (let n (add1 n))
+              n))
 (fact 14)
 "#;
         let res = roundtrip_string(source).unwrap();
-        assert_eq!(res, Expr::Integer(87178291200))
+        assert_eq!(res, Expr::Integer(15))
     }
 
     #[test]
@@ -500,10 +579,22 @@ mod tests {
               (let continue (eq n 1))
               (if continue
                   1
-                 (mul n (__anon_fn_0 (sub n 1))))))
+                 (mul n (fact (sub n 1))))))
 (fact 14)
 "#;
         let res = roundtrip_string(source).unwrap();
         assert_eq!(res, Expr::Integer(87178291200))
+    }
+
+    #[test]
+    fn weird_fib() {
+        let res = roundtrip_file("examples/fib.lisp").unwrap();
+        assert_eq!(res, Expr::Integer(55))
+    }
+
+    #[test]
+    fn weird_recursion() {
+        let res = roundtrip_file("examples/weird_recursion.lisp").unwrap();
+        assert_eq!(res, Expr::Integer(55))
     }
 }
