@@ -62,8 +62,6 @@ pub fn define_alloc(jit: &mut JIT) -> Result<(), String> {
 
     jit.module.clear_context(&mut jit.context);
 
-    jit.module.finalize_definitions();
-
     Ok(())
 }
 

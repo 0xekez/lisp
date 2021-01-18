@@ -156,8 +156,6 @@ pub fn emit_procedure(
 
     jit.module.clear_context(&mut jit.context);
 
-    jit.module.finalize_definitions();
-
     Ok(())
 }
 
@@ -334,7 +332,7 @@ pub(crate) fn annotate_free_variables(f: &mut LustFn) {
 /// Emits code to allocate a closure and returns a pointer to it.
 fn emit_alloc_closure(var_count: usize, ctx: &mut Context) -> Result<Value, String> {
     // Free variables and the function pointer.
-    let size = var_count + 1;
+    let size = (var_count + 1) * (ctx.word.bytes() as usize);
     emit_alloc(size as i64, ctx)
 }
 
@@ -404,7 +402,7 @@ pub(crate) fn emit_get_fn_addr(name: &str, ctx: &mut Context) -> Result<Value, S
 
     let callee = ctx
         .module
-        .declare_function(name, Linkage::Local, &sig)
+        .declare_function(name, Linkage::Import, &sig)
         .map_err(|e| e.to_string())?;
 
     let local_callee = ctx
