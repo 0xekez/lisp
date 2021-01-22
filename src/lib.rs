@@ -1,6 +1,7 @@
 pub mod compiler;
 pub mod conditional;
 pub mod conversions;
+pub mod data;
 pub mod errors;
 pub mod heap;
 pub mod locals;

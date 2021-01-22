@@ -62,6 +62,29 @@ pub fn word_get_object_address(what: Word) -> UWord {
     (what & HEAP_PTR_MASK) as UWord
 }
 
+pub fn list_to_immediate(list: &[Expr]) -> Word {
+    if let Some(e) = list.first() {
+        let mut pair = Vec::with_capacity(2);
+        pair.push(e.immediate_rep());
+        pair.push(list_to_immediate(&list[1..]));
+        let ptr_word = pair.as_mut_ptr() as Word;
+        std::mem::forget(pair);
+        ptr_word | PAIR_TAG
+    } else {
+        NIL_VALUE
+    }
+}
+
+pub fn list_from_immediate(ptr_word: Word) -> Expr {
+    debug_assert_eq!(ptr_word & HEAP_TAG_MASK, PAIR_TAG);
+    let ptr = (ptr_word & HEAP_PTR_MASK) as *mut Word;
+    let slice = unsafe { std::slice::from_raw_parts(ptr, 2) };
+    let first = Expr::from_immediate(slice[0]);
+    let rest = Expr::from_immediate(slice[1]);
+
+    Expr::List(vec![first, rest])
+}
+
 impl Expr {
     pub fn is_immediate(&self) -> bool {
         true
@@ -70,18 +93,19 @@ impl Expr {
     pub fn immediate_rep(&self) -> Word {
         debug_assert!(self.is_immediate(), "expected immediate type");
         match self {
-            Self::Integer(i) => (i << FIXNUM_SHIFT) | FIXNUM_TAG,
-            Self::Char(c) => ((*c as Word) << CHAR_SHIFT) | CHAR_TAG,
-            Self::Bool(b) => ((*b as Word) << BOOL_SHIFT) | BOOL_TAG,
-            Self::Nil => NIL_VALUE,
-            _ => panic!("non-immediate in immediate_rep"),
+            Expr::Integer(i) => (i << FIXNUM_SHIFT) | FIXNUM_TAG,
+            Expr::Char(c) => ((*c as Word) << CHAR_SHIFT) | CHAR_TAG,
+            Expr::Bool(b) => ((*b as Word) << BOOL_SHIFT) | BOOL_TAG,
+            Expr::Nil => NIL_VALUE,
+            Expr::List(v) => list_to_immediate(v),
+            Expr::Symbol(_) => todo!("symbol immediates unsupported"),
         }
     }
 
     pub fn from_immediate(what: Word) -> Expr {
         debug_assert!(word_is_immediate(what), "expected immediate type");
         match () {
-            _ if word_is_pair(what) => Expr::List(vec![]),
+            _ if word_is_pair(what) => list_from_immediate(what),
             _ if word_is_int(what) => Expr::Integer(what >> FIXNUM_SHIFT),
             _ if word_is_char(what) => {
                 Expr::Char(unsafe { std::mem::transmute_copy(&(what >> CHAR_SHIFT)) })
@@ -130,5 +154,23 @@ mod tests {
     #[test]
     fn roundtrip_nil() {
         test_roundtrip(Expr::Nil);
+    }
+
+    #[test]
+    fn rountrip_list() {
+        let start = Expr::List(vec![Expr::Integer(1), Expr::Bool(false)]);
+        let start_immediate = start.immediate_rep();
+        let end = Expr::from_immediate(start_immediate);
+
+        // Roundtripping a list results in a cons structure and not a
+        // list like we started with due to the way that lists are
+        // represented in Lust vs Rust.
+        assert_eq!(
+            end,
+            Expr::List(vec![
+                Expr::Integer(1),
+                Expr::List(vec![Expr::Bool(false), Expr::Nil])
+            ])
+        )
     }
 }

@@ -6,7 +6,7 @@ use crate::compiler::{emit_expr, JIT};
 use crate::heap::emit_alloc;
 use crate::locals::emit_var_access;
 use crate::locals::emit_var_decl_and_assign;
-use crate::primitives::string_is_primitive;
+use crate::primitives::string_is_builtin;
 use crate::Expr;
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
@@ -273,12 +273,12 @@ fn analyze_variables(e: &Expr) -> (HashSet<&String>, HashSet<&String>) {
     let mut free = HashSet::new();
 
     if let Some((name, binding)) = e.is_let() {
-        bound.insert(name);
         let (newbound, newfree) = analyze_variables(binding);
         bound.extend(newbound);
         // Extend with the free variables found that do not have
         // bindings.
         free.extend(newfree.difference(&bound));
+        bound.insert(name);
     } else if let Some((params, body)) = e.is_fndef() {
         // Variables that are bound in this function.
         let mut fn_bound: HashSet<&String> = params.into_iter().collect();
@@ -295,7 +295,7 @@ fn analyze_variables(e: &Expr) -> (HashSet<&String>, HashSet<&String>) {
         // it's probably worthwhile to write some sort of
         // "string_is_builtin" method that also would include `let`
         // and `fn` which ought to be caught above.
-        if !string_is_primitive(s) && s != "if" && !bound.contains(s) {
+        if !string_is_builtin(s) && !bound.contains(s) {
             free.insert(s);
         }
     } else if let Expr::List(v) = e {
@@ -320,10 +320,13 @@ pub(crate) fn annotate_free_variables(f: &mut LustFn) {
 
     for e in &f.body {
         let (newbound, newfree) = analyze_variables(e);
-        bound.extend(newbound);
         // Extend with the free variables found that do not have
-        // bindings.
+        // bindings in our scope yet.
         free.extend(newfree.difference(&bound));
+        // Once that is done add the new bound variables to our
+        // scope. This needs to happen second so variables that are
+        // free and bound in analyze_variables are added properly.
+        bound.extend(newbound);
     }
 
     f.free_variables = free.into_iter().cloned().collect();
@@ -426,7 +429,9 @@ mod tests {
         let source = r#"
 (let dog 10)
 (let cat 11)
+(let half 5)
 (let foo (fn (a b)
+            (let half half)
             (let bar (fn (c)
                           (foo b (add c a))))
             (if (bar dog) cat dog)))
@@ -461,7 +466,12 @@ mod tests {
         assert_eq!(expected, functions[0].free_variables);
 
         // depth first traversal should mean functions[1] is foo
-        let expected = vec!["cat".to_string(), "dog".to_string(), "foo".to_string()];
+        let expected = vec![
+            "cat".to_string(),
+            "dog".to_string(),
+            "foo".to_string(),
+            "half".to_string(),
+        ];
         functions[1].free_variables.sort();
         assert_eq!(expected, functions[1].free_variables)
     }
@@ -582,6 +592,20 @@ mod tests {
 "#;
         let res = roundtrip_string(source).unwrap();
         assert_eq!(res, Expr::Integer(87178291200))
+    }
+
+    /// Variables and function paramaters should not conflict.
+    #[test]
+    fn partial_free_var() {
+        let source = r#"
+(let half 5)
+(let foo (fn (n)
+             (let half (sub n half))
+             (mul half 2)))
+(foo 26)
+"#;
+        let res = roundtrip_string(source).unwrap();
+        assert_eq!(res, Expr::Integer(42))
     }
 
     #[test]
