@@ -1,3 +1,5 @@
+//! An error without a location is an error without purpose.
+
 use crate::reader;
 
 /// A location in source code. Stores in the form [start, end)

@@ -1,5 +1,6 @@
-/// Handles parsing of Lust expressions and emits some parse errors
-/// along the way.
+//! Handles parsing of Lust expressions and emits some parse errors
+//! along the way.
+
 use crate::errors::Error;
 use crate::location::Location;
 use crate::tokenbuffer::TokenBuffer;

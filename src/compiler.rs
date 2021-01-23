@@ -1,6 +1,18 @@
+//! Crossword compiler whom did suddenly die
+//! The doctors and police, didn't really no why
+//! The compiler he was clever he left them a clue
+//! Still the stupid ******* never new what to do
+//! It wasn't cryptic it had no hidden undertones
+//! It wasn't suicide, I'm messaging it on a phone
+//! So how did he or she come to Meet their maker
+//! Answers You will find in tomorrow's  local paper.
+//!
+//! - [Mark Bell](https://hellopoetry.com/poem/1927377/give-us-a-clue/)
+
 use std::collections::HashMap;
 
 use crate::conditional;
+use crate::data;
 use crate::heap::define_alloc;
 use crate::locals;
 use crate::primitives;
@@ -8,6 +20,7 @@ use crate::procedures;
 use crate::Expr;
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::*;
+use cranelift_module::DataContext;
 use cranelift_module::{Linkage, Module};
 use cranelift_simplejit::{SimpleJITBuilder, SimpleJITModule};
 use procedures::emit_procedure;
@@ -26,6 +39,9 @@ pub struct JIT {
 
     /// Used to emit code directly into memory for execution.
     pub module: SimpleJITModule,
+
+    // Stores information about data objects that the JIT owns.
+    pub data_ctx: DataContext,
 }
 
 /// Manages the state needed for compilation of a function by lustc.
@@ -49,6 +65,7 @@ impl Default for JIT {
             builder_context: FunctionBuilderContext::new(),
             context: module.make_context(),
             module,
+            data_ctx: DataContext::new(),
         };
         define_alloc(&mut jit).unwrap();
         jit
@@ -104,6 +121,14 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
 
 pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     let mut jit = JIT::default();
+
+    // Initialize program data.
+    let data = data::collect_data(program);
+    data::replace_data(program, &data);
+
+    for d in data {
+        data::create_data(d, &mut jit)?;
+    }
 
     // Transforms the program so that anonymous functions are lifted
     // to the top of the program and replaced with their anyonmous

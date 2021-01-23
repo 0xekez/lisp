@@ -1,3 +1,7 @@
+//! Parsers have errors
+//! Compilers as well
+//! Errors to
+
 use crate::location::Location;
 use crate::reader;
 use crate::tokenizer::{Token, TokenType};

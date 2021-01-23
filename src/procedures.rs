@@ -47,17 +47,23 @@ impl Expr {
     /// Collects a list of symbols from an expression. Used for
     /// collecting arguments to a function.
     fn collect_list_of_symbols(expr: &Expr) -> Option<Vec<&String>> {
-        if let Self::List(v) = expr {
-            let mut res = Vec::with_capacity(v.len());
-            for e in v {
-                match e {
-                    Expr::Symbol(s) => res.push(s),
-                    _ => return None,
+        match expr {
+            Expr::List(v) => {
+                let mut res = Vec::with_capacity(v.len());
+                for e in v {
+                    match e {
+                        Expr::Symbol(s) => res.push(s),
+                        _ => return None,
+                    }
                 }
+                Some(res)
             }
-            Some(res)
-        } else {
-            None
+            // An exmpty list gets parsed in as Expr::Nil so if that
+            // is in the position of a function param list it means
+            // that we have no arguments. If we add a dedicated nil
+            // symbol this will need to change.
+            Expr::Nil => Some(vec![]),
+            _ => None,
         }
     }
 }

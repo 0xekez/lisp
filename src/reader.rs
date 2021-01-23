@@ -1,5 +1,6 @@
-/// A small reader that reads non-whitespace tokens from an input
-/// string and keeps track of its visual location in the string.
+//! A small reader that reads non-whitespace tokens from an input
+//! string and keeps track of its visual location in the string.
+
 use std::iter;
 
 /// A location in a string.

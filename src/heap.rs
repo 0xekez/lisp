@@ -1,3 +1,7 @@
+//! A heap without a garbage collector
+//! A heap without manual dealocation
+//! Some things truly never die
+
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::AbiParam;
 use cranelift::prelude::InstBuilder;
