@@ -226,7 +226,7 @@ pub(crate) fn collect_functions(program: &[Expr]) -> Vec<LustFn> {
     let mut res = Vec::new();
 
     for e in program {
-        e.depth_first_traverse(&mut |e: &Expr| {
+        e.postorder_traverse(&mut |e: &Expr| {
             if let Some((params, body)) = e.is_fndef() {
                 res.push(LustFn {
                     name: format!("__anon_fn_{}", res.len()),
@@ -256,7 +256,7 @@ pub(crate) fn replace_functions(program: &mut [Expr], functions: &mut [LustFn]) 
         // so that we can be sure that the function bodies are
         // traversed before we hit them. At that point we can replace
         // the bodies from the `functions` list with the updated one.
-        e.depth_first_traverse_mut(&mut |e: &mut Expr| {
+        e.postorder_traverse_mut(&mut |e: &mut Expr| {
             if let Some(_) = e.is_fndef() {
                 if let Expr::List(v) = e {
                     functions[count].body = v[2..].to_vec();
@@ -620,7 +620,9 @@ mod tests {
         assert_eq!(res, Expr::Integer(55))
     }
 
+    // Until we have an implementation of set this test should panic.
     #[test]
+    #[should_panic]
     fn weird_recursion() {
         let res = roundtrip_file("examples/weird_recursion.lisp").unwrap();
         assert_eq!(res, Expr::Integer(55))

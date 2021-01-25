@@ -17,6 +17,7 @@ use crate::heap::define_alloc;
 use crate::locals;
 use crate::primitives;
 use crate::procedures;
+use crate::renamer;
 use crate::Expr;
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::*;
@@ -122,10 +123,14 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
 pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     let mut jit = JIT::default();
 
+    // Rename symbols so that they are all unique.
+    renamer::make_names_unique(program)?;
+
     // Initialize program data.
     let data = data::collect_data(program);
+    // Replace it with references to its location in the JIT.
     data::replace_data(program, &data);
-
+    // Store the data in the JIT.
     for d in data {
         data::create_data(d, &mut jit)?;
     }
@@ -142,6 +147,7 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
         procedures::annotate_free_variables(&mut f);
     }
 
+    // Replace functions with their anonymous names.
     procedures::replace_functions(program, &mut functions);
     let fnmap = procedures::build_fn_map(functions);
 

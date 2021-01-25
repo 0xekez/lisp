@@ -263,7 +263,7 @@ fn emit_word_to_bool(accum: Value, builder: &mut FunctionBuilder) -> Value {
 }
 
 pub(crate) fn string_is_builtin(s: &str) -> bool {
-    string_is_primitive(s) || s == "if" || s == "quote"
+    string_is_primitive(s) || s == "if" || s == "quote" || s == "let" || s == "fn"
 }
 
 pub(crate) fn string_is_primitive(s: &str) -> bool {

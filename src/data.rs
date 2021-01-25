@@ -48,7 +48,7 @@ pub(crate) fn collect_data(program: &[Expr]) -> Vec<LustData> {
     let mut res = Vec::new();
 
     for e in program {
-        e.depth_first_traverse(&mut |e: &Expr| {
+        e.postorder_traverse(&mut |e: &Expr| {
             if let Some(repr) = e.is_complex_const() {
                 res.push(LustData {
                     name: format!("__anon_data_{}", res.len()),
@@ -79,7 +79,7 @@ pub(crate) fn collect_data(program: &[Expr]) -> Vec<LustData> {
 pub(crate) fn replace_data(program: &mut [Expr], data: &[LustData]) {
     let mut count = 0;
     for e in program {
-        e.depth_first_traverse_mut(&mut |e: &mut Expr| {
+        e.postorder_traverse_mut(&mut |e: &mut Expr| {
             if let Some(_) = e.is_complex_const() {
                 *e = Expr::Symbol(data[count].name.clone());
                 count += 1;

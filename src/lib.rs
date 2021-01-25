@@ -10,6 +10,7 @@ pub mod parser;
 pub mod primitives;
 pub mod procedures;
 pub mod reader;
+pub mod renamer;
 pub mod tokenbuffer;
 pub mod tokenizer;
 
@@ -20,6 +21,7 @@ use crate::parser::Parser;
 pub(crate) type Word = i64;
 pub(crate) type UWord = u64;
 
+/// An expression as understood by the Lust compiler.
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
     Integer(i64),
@@ -31,6 +33,8 @@ pub enum Expr {
 }
 
 impl crate::parser::Expr {
+    /// Converts an Expr as understood by the parser into an Expr as
+    /// understood by the compiler.
     pub(crate) fn into_expr(self) -> Expr {
         match self.val {
             ExprVal::Number(i) => Expr::Integer(i),
@@ -49,15 +53,27 @@ impl crate::parser::Expr {
     }
 }
 
+/// Used to indicate to the preorder traversal function rather or not
+/// it ought to traverse the rest of the list.
+pub(crate) enum PreorderStatus {
+    /// Indicates that the traversal should continue as expected.
+    Continue,
+    /// Indicates that the traversal should skip the rest of the
+    /// current node.
+    Skip,
+}
+
 impl Expr {
-    pub(crate) fn depth_first_traverse<F>(&self, f: &mut F)
+    /// Performs a postorder traversal of the expr calling F on each
+    /// item it encounters.
+    pub(crate) fn postorder_traverse<F>(&self, f: &mut F)
     where
         F: FnMut(&Expr),
     {
         match self {
             Expr::List(v) => {
                 for e in v {
-                    e.depth_first_traverse(f);
+                    e.postorder_traverse(f);
                 }
                 f(self);
             }
@@ -65,19 +81,39 @@ impl Expr {
         }
     }
 
-    pub(crate) fn depth_first_traverse_mut<F>(&mut self, f: &mut F)
+    /// Performs a postorder traversal of the expr calling F on each
+    /// item it encounters. F may mutate the underlying expr.
+    pub(crate) fn postorder_traverse_mut<F>(&mut self, f: &mut F)
     where
         F: FnMut(&mut Expr),
     {
         if let Expr::List(v) = self {
             for e in v {
-                e.depth_first_traverse_mut(f);
+                e.postorder_traverse_mut(f);
             }
         }
         f(self);
     }
+
+    pub(crate) fn preorder_traverse_mut_res<F, E>(&mut self, f: &mut F) -> Result<PreorderStatus, E>
+    where
+        F: FnMut(&mut Expr) -> Result<PreorderStatus, E>,
+    {
+        let status = f(self)?;
+        if let PreorderStatus::Skip = status {
+            return Ok(status);
+        }
+        if let Expr::List(v) = self {
+            for e in v {
+                e.preorder_traverse_mut_res(f)?;
+            }
+        }
+        Ok(PreorderStatus::Continue)
+    }
 }
 
+/// Roundtrips a string by spinning up a JIT and executing it. Returns
+/// the result.
 pub fn roundtrip_string(input: &str) -> Result<Expr, String> {
     let mut parser = Parser::new(input);
     let mut exprs = Vec::new();
@@ -98,6 +134,7 @@ pub fn roundtrip_string(input: &str) -> Result<Expr, String> {
     crate::compiler::roundtrip_program(&mut exprs)
 }
 
+/// Roundtrips a file by spinning up a JIT and executing it.
 pub fn roundtrip_file(name: &str) -> Result<Expr, String> {
     let contents = std::fs::read_to_string(name).map_err(|e| e.to_string())?;
     roundtrip_string(&contents)

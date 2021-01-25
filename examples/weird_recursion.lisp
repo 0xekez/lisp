@@ -2,7 +2,7 @@
 ;; detail than most people probably care about.
 
 (let fib 10)
-(let fib (fn (n)
+(set fib (fn (n)
 	     (if (lt n 2)
 		 n
 	       (add (fib (sub n 2)) (fib (sub n 1))))))
