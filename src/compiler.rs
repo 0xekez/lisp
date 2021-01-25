@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 use crate::conditional;
 use crate::data;
+use crate::escape;
 use crate::heap::define_alloc;
 use crate::locals;
 use crate::primitives;
@@ -149,6 +150,11 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
 
     // Replace functions with their anonymous names.
     procedures::replace_functions(program, &mut functions);
+
+    // Annotate escaped variables in closures
+    escape::annotate_escaped_variables(&mut functions, program)?;
+
+    // Build a map from anonymous names to values
     let fnmap = procedures::build_fn_map(functions);
 
     for (_, f) in &fnmap {

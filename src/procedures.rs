@@ -99,40 +99,48 @@ pub fn emit_procedure(
     builder.switch_to_block(entry_block);
     builder.seal_block(entry_block);
 
-    let mut env = HashMap::new();
-
-    for (i, p) in params.iter().enumerate() {
-        let val = builder.block_params(entry_block)[i];
-        emit_var_decl_and_assign(p, val, &mut env, &mut builder, word)?;
-    }
-
-    let closure_ptr = builder.block_params(entry_block)[params.len()];
-    let free_vars = fnmap
-        .get(name)
-        .map(|f| &f.free_variables)
-        .ok_or(format!("internal error finding free vars for {}", name))?;
-    let word_size = word.bytes();
-
-    for (i, free) in free_vars.iter().enumerate() {
-        let offset = i + 1;
-        let byte_offset = offset * (word_size as usize);
-
-        let val = builder
-            .ins()
-            .load(word, MemFlags::new(), closure_ptr, byte_offset as i32);
-
-        emit_var_decl_and_assign(free, val, &mut env, &mut builder, word)?;
-    }
-
     // FIXME: ugly clone here.
     let mut ctx = Context::new(
         builder,
         &mut jit.module,
         word,
-        env,
+        HashMap::new(),
         fnmap.clone(),
         Vec::new(),
     );
+
+    for (i, p) in params.iter().enumerate() {
+        let val = ctx.builder.block_params(entry_block)[i];
+        // Params that are escaped need to be initialized
+        // appropriately.
+        let val = if p.starts_with("e_") {
+            let location = emit_alloc(ctx.word.bytes().into(), &mut ctx)?;
+            ctx.builder.ins().store(MemFlags::new(), val, location, 0);
+            location
+        } else {
+            val
+        };
+        emit_var_decl_and_assign(p, val, &mut ctx)?;
+    }
+
+    let closure_ptr = ctx.builder.block_params(entry_block)[params.len()];
+    let free_vars = fnmap
+        .get(name)
+        .map(|f| &f.free_variables)
+        .ok_or(format!("internal error finding free vars for {}", name))?;
+    let word_size = ctx.word.bytes();
+
+    for (i, free) in free_vars.iter().enumerate() {
+        let offset = i + 1;
+        let byte_offset = offset * (word_size as usize);
+
+        let val =
+            ctx.builder
+                .ins()
+                .load(ctx.word, MemFlags::new(), closure_ptr, byte_offset as i32);
+
+        emit_var_decl_and_assign(free, val, &mut ctx)?;
+    }
 
     let vals = body
         .iter()
@@ -301,7 +309,7 @@ fn analyze_variables(e: &Expr) -> (HashSet<&String>, HashSet<&String>) {
         // it's probably worthwhile to write some sort of
         // "string_is_builtin" method that also would include `let`
         // and `fn` which ought to be caught above.
-        if !string_is_builtin(s) && !bound.contains(s) {
+        if !string_is_builtin(s) && !bound.contains(s) && !s.starts_with("__anon_") {
             free.insert(s);
         }
     } else if let Expr::List(v) = e {
@@ -375,11 +383,27 @@ pub(crate) fn emit_make_closure(
 
     for (offset, free) in free_variables.iter().enumerate() {
         let val = if letstack_contains(ctx, free) {
+            let pointer = ctx
+                .builder
+                .ins()
+                .bor_imm(closure_ptr, crate::conversions::CLOSURE_TAG);
+            let location = emit_alloc(ctx.word.bytes().into(), ctx)?;
             ctx.builder
                 .ins()
-                .bor_imm(closure_ptr, crate::conversions::CLOSURE_TAG)
+                .store(MemFlags::new(), pointer, location, 0);
+            location
         } else {
-            emit_var_access(free, ctx)?
+            // Rather than emit a regular var access here we want to
+            // get the address which would give us the value of the
+            // variable we're interested in the address of the
+            // variable.
+            match ctx.env.get(free) {
+                Some(v) => Ok(ctx.builder.use_var(*v)),
+                None => Err(format!(
+                    "internal error: use of undeclared variable ({})",
+                    free
+                )),
+            }?
         };
         // let val = emit_var_access(free, ctx)?;
         let byte_offset = (1 + (offset as u32)) * word_size;
@@ -620,9 +644,7 @@ mod tests {
         assert_eq!(res, Expr::Integer(55))
     }
 
-    // Until we have an implementation of set this test should panic.
     #[test]
-    #[should_panic]
     fn weird_recursion() {
         let res = roundtrip_file("examples/weird_recursion.lisp").unwrap();
         assert_eq!(res, Expr::Integer(55))

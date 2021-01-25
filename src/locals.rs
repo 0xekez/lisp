@@ -9,6 +9,7 @@ use cranelift_module::Module;
 
 use crate::compiler::emit_expr;
 use crate::compiler::Context;
+use crate::heap::emit_alloc;
 use crate::procedures::emit_make_closure;
 use crate::Expr;
 
@@ -43,11 +44,26 @@ pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Valu
 
     let val = emit_expr(val, ctx)?;
 
-    let var = if let Some(var) = ctx.env.get(name) {
-        *var
+    // If the value is an escaped value then we allocate space for it
+    // on the heap and store its value there.
+    let val = if name.starts_with("e_") {
+        let location = emit_alloc(ctx.word.bytes().into(), ctx)?;
+        ctx.builder.ins().store(MemFlags::new(), val, location, 0);
+        location
     } else {
-        emit_declare_var(name, &mut ctx.env, &mut ctx.builder, ctx.word)?
+        val
     };
+
+    let var = if let Some(_) = ctx.env.get(name) {
+        Err("internal error: let expression modifying an already declared variable")
+    } else {
+        Ok(emit_declare_var(
+            name,
+            &mut ctx.env,
+            &mut ctx.builder,
+            ctx.word,
+        )?)
+    }?;
 
     ctx.builder.def_var(var, val);
 
@@ -82,10 +98,23 @@ pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, St
             .builder
             .ins()
             .load(ctx.word, MemFlags::new(), data_ptr, 0))
+    } else if name.starts_with("e_") {
+        let var = ctx.env.get(name).ok_or(format!(
+            "internal error: use of undeclared variable ({})",
+            name
+        ))?;
+        let location = ctx.builder.use_var(*var);
+        Ok(ctx
+            .builder
+            .ins()
+            .load(ctx.word, MemFlags::new(), location, 0))
     } else {
         match ctx.env.get(name) {
             Some(v) => Ok(ctx.builder.use_var(*v)),
-            None => Err(format!("use of undeclared variable: {}", name)),
+            None => Err(format!(
+                "internal error: use of undeclared variable ({})",
+                name
+            )),
         }
     }
 }
@@ -97,7 +126,7 @@ pub(crate) fn emit_declare_var(
     word: Type,
 ) -> Result<Variable, String> {
     if env.contains_key(name) {
-        return Err(format!("variable {} is declared more than once", name));
+        return Err(format!("variable ({}) is declared more than once", name));
     }
     let index = env.len();
     let var = Variable::new(index);
@@ -109,12 +138,11 @@ pub(crate) fn emit_declare_var(
 pub(crate) fn emit_var_decl_and_assign(
     name: &str,
     val: Value,
-    env: &mut HashMap<String, Variable>,
-    builder: &mut FunctionBuilder,
-    word: Type,
+    ctx: &mut Context,
 ) -> Result<Variable, String> {
-    let var = emit_declare_var(name, env, builder, word)?;
-    builder.def_var(var, val);
+    let var = emit_declare_var(name, &mut ctx.env, &mut ctx.builder, ctx.word)?;
+
+    ctx.builder.def_var(var, val);
     Ok(var)
 }
 
@@ -277,7 +305,12 @@ mod tests {
         test_evaluation(&ast, expected);
     }
 
+    /// Let expressions shouldn't redefine variables. There are
+    /// variable uniquifying passes that should happen earlier in the
+    /// compiler that make let expressions shadow variables instead of
+    /// modifying existing ones.
     #[test]
+    #[should_panic]
     fn var_redef() {
         let ast = [
             Expr::List(vec![

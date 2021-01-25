@@ -3,6 +3,7 @@ pub mod conditional;
 pub mod conversions;
 pub mod data;
 pub mod errors;
+pub mod escape;
 pub mod heap;
 pub mod locals;
 pub mod location;

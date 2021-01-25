@@ -252,6 +252,31 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
                 .ins()
                 .load(ctx.word, MemFlags::new(), address, ctx.word.bytes() as i32)
         }
+
+        "set" => {
+            check_arg_len("set", args, 2)?;
+            let val = emit_expr(&args[1], ctx)?;
+            let target = if let Expr::Symbol(s) = &args[0] {
+                Ok(s)
+            } else {
+                Err(format!(
+                    "set expected a symbol as its first argument, got {:?}",
+                    args[1]
+                ))
+            }?;
+            let var = ctx.env.get(target).ok_or(format!(
+                "use of undeclared variable ({}) in set expression",
+                target
+            ))?;
+
+            if target.starts_with("e_") {
+                let location = ctx.builder.use_var(*var);
+                ctx.builder.ins().store(MemFlags::new(), val, location, 0);
+            } else {
+                ctx.builder.def_var(*var, val);
+            }
+            val
+        }
         _ => panic!("non primitive in emit_primcall: {}", name),
     })
 }
@@ -285,6 +310,7 @@ pub(crate) fn string_is_primitive(s: &str) -> bool {
         || s == "cons"
         || s == "car"
         || s == "cdr"
+        || s == "set"
 }
 
 fn check_arg_len(name: &str, args: &[Expr], expected: usize) -> Result<(), String> {
