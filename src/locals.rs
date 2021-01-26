@@ -55,7 +55,10 @@ pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Valu
     };
 
     let var = if let Some(_) = ctx.env.get(name) {
-        Err("internal error: let expression modifying an already declared variable")
+        Err(format!(
+            "internal error: let expression modifying an already declared variable: {}",
+            name
+        ))
     } else {
         Ok(emit_declare_var(
             name,

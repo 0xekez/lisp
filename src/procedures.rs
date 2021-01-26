@@ -289,6 +289,20 @@ fn analyze_variables(e: &Expr) -> (HashSet<&String>, HashSet<&String>) {
     if let Some((name, binding)) = e.is_let() {
         let (newbound, newfree) = analyze_variables(binding);
         bound.extend(newbound);
+        // If the binding is a function definition then our special
+        // rule for recursive anonymous functions applies and we
+        // determine that the variable being assigned to is not a free
+        // variable after all as it will be bound to the function.
+        //
+        // Note that this is for the function that sees the internal
+        // function declaration. The internal function declaration
+        // will still annotate name as a free variable here. We're
+        // just saying here that the outer function doesn't need to
+        // try and capture the symbol as a free variable. The inner
+        // one still does.
+        if let Some(_) = binding.is_fndef() {
+            bound.insert(name);
+        }
         // Extend with the free variables found that do not have
         // bindings.
         free.extend(newfree.difference(&bound));
@@ -639,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn weird_fib() {
+    fn fib() {
         let res = roundtrip_file("examples/fib.lisp").unwrap();
         assert_eq!(res, Expr::Integer(55))
     }
@@ -648,5 +662,11 @@ mod tests {
     fn weird_recursion() {
         let res = roundtrip_file("examples/weird_recursion.lisp").unwrap();
         assert_eq!(res, Expr::Integer(55))
+    }
+
+    #[test]
+    fn memoized_fib() {
+        let res = roundtrip_file("examples/memoized_fib.lisp").unwrap();
+        assert_eq!(res, Expr::Integer(102334155))
     }
 }
