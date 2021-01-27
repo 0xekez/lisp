@@ -21,8 +21,10 @@ pub(crate) static HEAP_TAG_MASK: Word = 0b111;
 /// to we use the inverse of ptr mask which zeros out the heap tag.
 pub(crate) static HEAP_PTR_MASK: Word = !HEAP_TAG_MASK;
 
+/// Tag for a cons object
 pub(crate) static PAIR_TAG: Word = 0b001;
 
+/// Tag for a closure object
 pub(crate) static CLOSURE_TAG: Word = 0b110;
 
 pub fn word_is_char(what: Word) -> bool {

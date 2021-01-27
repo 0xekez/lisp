@@ -10,6 +10,7 @@ use cranelift_module::Module;
 use crate::compiler::emit_expr;
 use crate::compiler::Context;
 use crate::heap::emit_alloc;
+use crate::primitives::string_is_primitive;
 use crate::procedures::emit_make_closure;
 use crate::Expr;
 
@@ -17,24 +18,31 @@ impl Expr {
     /// Determines if the expression is a let expression and if it is
     /// returns the name and expression being bound.
     pub fn is_let(&self) -> Option<(&String, &Expr)> {
-        match self {
-            Self::List(v) => {
-                if let Some(Expr::Symbol(s)) = v.first() {
-                    if s == "let" && v.len() == 3 {
-                        if let Expr::Symbol(s) = &v[1] {
-                            Some((s, &v[2]))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
+        if let Self::List(v) = self {
+            if let Some(Expr::Symbol(s)) = v.first() {
+                if s == "let" && v.len() == 3 {
+                    if let Expr::Symbol(s) = &v[1] {
+                        return Some((s, &v[2]));
                     }
-                } else {
-                    None
                 }
             }
-            _ => None,
         }
+        None
+    }
+
+    /// Determines if the expression is a set expression and if it is
+    /// returns the name and expression being set.
+    pub fn is_set(&self) -> Option<(&String, &Expr)> {
+        if let Self::List(v) = self {
+            if let Some(Expr::Symbol(s)) = v.first() {
+                if s == "set" && v.len() == 3 {
+                    if let Expr::Symbol(s) = &v[1] {
+                        return Some((s, &v[2]));
+                    }
+                }
+            }
+        }
+        None
     }
 }
 
@@ -76,8 +84,24 @@ pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Valu
     Ok(ctx.builder.use_var(var))
 }
 
+pub(crate) fn emit_set(target: &str, val: &Expr, ctx: &mut Context) -> Result<Value, String> {
+    let val = emit_expr(val, ctx)?;
+    let var = ctx.env.get(target).ok_or(format!(
+        "use of undeclared variable ({}) in set expression",
+        target
+    ))?;
+
+    if target.starts_with("e_") {
+        let location = ctx.builder.use_var(*var);
+        ctx.builder.ins().store(MemFlags::new(), val, location, 0);
+    } else {
+        ctx.builder.def_var(*var, val);
+    }
+    Ok(val)
+}
+
 pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, String> {
-    if name.starts_with("__anon_fn_") {
+    if name.starts_with("__anon_fn_") || string_is_primitive(name) {
         // We're dealing with a closure so we'll need to make one.
         let free_variables = ctx
             .fnmap
@@ -153,21 +177,21 @@ pub(crate) fn emit_var_decl_and_assign(
 mod tests {
     use super::*;
 
-    fn test_evaluation(exprs: &[Expr], expected: Expr) {
-        assert_eq!(crate::compiler::roundtrip_exprs(exprs).unwrap(), expected)
+    fn test_evaluation(exprs: &mut [Expr], expected: Expr) {
+        assert_eq!(crate::compiler::roundtrip_program(exprs).unwrap(), expected)
     }
 
     #[test]
     fn let_return() {
-        let ast = [Expr::List(vec![
+        let mut ast = [Expr::List(vec![
             Expr::Symbol("let".to_string()),
             Expr::Symbol("tel".to_string()),
             Expr::Integer(10),
         ])];
         let expected = Expr::Integer(10);
-        test_evaluation(&ast, expected);
+        test_evaluation(&mut ast, expected);
 
-        let ast = [Expr::List(vec![
+        let mut ast = [Expr::List(vec![
             Expr::Symbol("let".to_string()),
             Expr::Symbol("tel".to_string()),
             Expr::List(vec![
@@ -177,12 +201,12 @@ mod tests {
             ]),
         ])];
         let expected = Expr::Char('🥺');
-        test_evaluation(&ast, expected);
+        test_evaluation(&mut ast, expected);
     }
 
     #[test]
     fn naked_var() {
-        let ast = [
+        let mut ast = [
             Expr::List(vec![
                 Expr::Symbol("let".to_string()),
                 Expr::Symbol("tel".to_string()),
@@ -191,9 +215,9 @@ mod tests {
             Expr::Symbol("tel".to_string()),
         ];
         let expected = Expr::Integer(10);
-        test_evaluation(&ast, expected);
+        test_evaluation(&mut ast, expected);
 
-        let ast = [
+        let mut ast = [
             Expr::List(vec![
                 Expr::Symbol("let".to_string()),
                 Expr::Symbol("tel".to_string()),
@@ -206,12 +230,12 @@ mod tests {
             Expr::Symbol("🚨".to_string()),
         ];
         let expected = Expr::Char('🥺');
-        test_evaluation(&ast, expected);
+        test_evaluation(&mut ast, expected);
     }
 
     #[test]
     fn clothed_var() {
-        let ast = [
+        let mut ast = [
             Expr::List(vec![
                 Expr::Symbol("let".to_string()),
                 Expr::Symbol("tel".to_string()),
@@ -224,12 +248,12 @@ mod tests {
             ]),
         ];
         let expected = Expr::Integer(11);
-        test_evaluation(&ast, expected);
+        test_evaluation(&mut ast, expected);
     }
 
     #[test]
     fn var_double_use() {
-        let ast = [
+        let mut ast = [
             Expr::List(vec![
                 Expr::Symbol("let".to_string()),
                 Expr::Symbol("tel".to_string()),
@@ -242,12 +266,12 @@ mod tests {
             ]),
         ];
         let expected = Expr::Integer(20);
-        test_evaluation(&ast, expected);
+        test_evaluation(&mut ast, expected);
     }
 
     #[test]
     fn lots_of_vars() {
-        let ast = [
+        let mut ast = [
             Expr::List(vec![
                 Expr::Symbol("let".to_string()),
                 Expr::Symbol("tel".to_string()),
@@ -305,7 +329,7 @@ mod tests {
             ]),
         ];
         let expected = Expr::Integer(20);
-        test_evaluation(&ast, expected);
+        test_evaluation(&mut ast, expected);
     }
 
     /// Let expressions shouldn't redefine variables. There are
@@ -315,7 +339,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn var_redef() {
-        let ast = [
+        let mut ast = [
             Expr::List(vec![
                 Expr::Symbol("let".to_string()),
                 Expr::Symbol("twice".to_string()),
@@ -327,6 +351,6 @@ mod tests {
                 Expr::Integer(10),
             ]),
         ];
-        crate::compiler::roundtrip_exprs(&ast).unwrap();
+        crate::compiler::roundtrip_exprs(&mut ast).unwrap();
     }
 }

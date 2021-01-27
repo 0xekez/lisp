@@ -8,6 +8,7 @@ use cranelift::prelude::InstBuilder;
 use cranelift::prelude::Value;
 use cranelift_codegen::binemit::NullTrapSink;
 use cranelift_module::Module;
+use cranelift_simplejit::SimpleJITModule;
 
 use crate::compiler::JIT;
 
@@ -70,27 +71,32 @@ pub fn define_alloc(jit: &mut JIT) -> Result<(), String> {
 }
 
 pub(crate) fn emit_alloc(size: i64, ctx: &mut crate::compiler::Context) -> Result<Value, String> {
-    let word = ctx.module.target_config().pointer_type();
+    Ok(emit_alloc_bare(size, &mut ctx.builder, &mut ctx.module))
+}
 
-    let mut sig = ctx.module.make_signature();
+pub(crate) fn emit_alloc_bare(
+    size: i64,
+    builder: &mut FunctionBuilder,
+    module: &mut SimpleJITModule,
+) -> Value {
+    let word = module.target_config().pointer_type();
+
+    let mut sig = module.make_signature();
 
     sig.params.push(AbiParam::new(word));
     sig.returns.push(AbiParam::new(word));
 
-    let callee = ctx
-        .module
+    let callee = module
         .declare_function("alloc", cranelift_module::Linkage::Import, &sig)
-        .map_err(|e| e.to_string())?;
+        .unwrap();
 
-    let local_callee = ctx
-        .module
-        .declare_func_in_func(callee, &mut ctx.builder.func);
+    let local_callee = module.declare_func_in_func(callee, &mut builder.func);
 
-    let size = ctx.builder.ins().iconst(word, size);
+    let size = builder.ins().iconst(word, size);
     let args = vec![size];
 
-    let call = ctx.builder.ins().call(local_callee, &args);
-    let res = ctx.builder.inst_results(call)[0];
+    let call = builder.ins().call(local_callee, &args);
+    let res = builder.inst_results(call)[0];
 
-    Ok(res)
+    res
 }

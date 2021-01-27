@@ -6,4 +6,4 @@
 		 n
 	       (add (fib (sub n 2)) (fib (sub n 1))))))
 
-(fib 10)
+(fib 40)

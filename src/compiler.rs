@@ -25,6 +25,7 @@ use cranelift::prelude::*;
 use cranelift_module::DataContext;
 use cranelift_module::{Linkage, Module};
 use cranelift_simplejit::{SimpleJITBuilder, SimpleJITModule};
+use primitives::string_is_primitive;
 use procedures::emit_procedure;
 use procedures::LustFn;
 
@@ -103,16 +104,18 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
         Expr::Nil => ctx.builder.ins().iconst(ctx.word, expr.immediate_rep()),
         Expr::Symbol(name) => locals::emit_var_access(name, ctx)?,
         Expr::List(v) => {
-            if expr.is_primcall() {
-                primitives::emit_primcall(expr.primcall_op(), &v[1..], ctx)?
-            } else if let Some((s, e)) = expr.is_let() {
-                locals::emit_let(s, e, ctx)?
+            if let Some((name, args)) = expr.is_primcall() {
+                primitives::emit_primcall(name, args, ctx)?
+            } else if let Some((symbol, binding)) = expr.is_let() {
+                locals::emit_let(symbol, binding, ctx)?
+            } else if let Some((symbol, binding)) = expr.is_set() {
+                locals::emit_set(symbol, binding, ctx)?
             } else if let Some((cond, then, else_)) = expr.is_conditional() {
                 conditional::emit_conditional(cond, then, else_, ctx)?
-            } else if let Some((name, args)) = expr.is_fncall() {
-                procedures::emit_fncall(name, args, ctx)?
+            } else if let Some((head, args)) = expr.is_fncall() {
+                procedures::emit_fncall(head, args, ctx)?
             } else if v.len() == 0 {
-                // A () == Expr::nil
+                // () == Expr::Nil
                 ctx.builder.ins().iconst(ctx.word, expr.immediate_rep())
             } else {
                 return Err(format!("illegal function application {:?}", v));
@@ -123,6 +126,8 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
 
 pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     let mut jit = JIT::default();
+
+    let primitive_fns = primitives::emit_primitives(&mut jit)?;
 
     // Rename symbols so that they are all unique.
     renamer::make_names_unique(program)?;
@@ -155,9 +160,12 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     escape::annotate_escaped_variables(&mut functions, program)?;
 
     // Build a map from anonymous names to values
-    let fnmap = procedures::build_fn_map(functions);
+    let mut fnmap = procedures::build_fn_map(functions);
+    // Extend the function map with the builtin functions
+    fnmap.extend(primitive_fns.into_iter().map(|f| (f.name.clone(), f)));
 
-    for (_, f) in &fnmap {
+    // Emit all the non-primitive functions into the JIT.
+    for (_, f) in fnmap.iter().filter(|(name, _)| !string_is_primitive(name)) {
         emit_procedure(&mut jit, &f.name, &f.params, &f.body, &fnmap)?;
     }
 

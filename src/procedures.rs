@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use crate::compiler::Context;
 use crate::compiler::{emit_expr, JIT};
 use crate::heap::emit_alloc;
-use crate::locals::emit_var_access;
 use crate::locals::emit_var_decl_and_assign;
 use crate::primitives::string_is_builtin;
 use crate::Expr;
@@ -16,11 +15,11 @@ impl Expr {
     /// call. If it is, returns a tuple containing the name of the
     /// function being called and a list of expressions corresponding
     /// to its arguments. Otherwise, returns None.
-    pub fn is_fncall(&self) -> Option<(&str, &[Expr])> {
+    pub fn is_fncall(&self) -> Option<(&Expr, &[Expr])> {
         match self {
             Self::List(v) => {
-                if let Some(Expr::Symbol(s)) = v.first() {
-                    Some((s, &v[1..]))
+                if let Some(e) = v.first() {
+                    Some((e, &v[1..]))
                 } else {
                     None
                 }
@@ -176,7 +175,7 @@ pub fn emit_procedure(
 /// Emits a call to a function. If the name is the name of an
 /// anonymous function emits a direct call. Otherwise, emits an
 /// indirect one to the function pointed to by the argument variable.
-pub(crate) fn emit_fncall(name: &str, args: &[Expr], ctx: &mut Context) -> Result<Value, String> {
+pub(crate) fn emit_fncall(head: &Expr, args: &[Expr], ctx: &mut Context) -> Result<Value, String> {
     let word = ctx.module.target_config().pointer_type();
 
     let mut sig = ctx.module.make_signature();
@@ -193,7 +192,7 @@ pub(crate) fn emit_fncall(name: &str, args: &[Expr], ctx: &mut Context) -> Resul
         .map(|e| emit_expr(e, ctx))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let closure_ptr = emit_var_access(name, ctx)?;
+    let closure_ptr = emit_expr(head, ctx)?;
     let closure_ptr = ctx
         .builder
         .ins()
@@ -655,7 +654,7 @@ mod tests {
     #[test]
     fn fib() {
         let res = roundtrip_file("examples/fib.lisp").unwrap();
-        assert_eq!(res, Expr::Integer(55))
+        assert_eq!(res, Expr::Integer(102334155))
     }
 
     #[test]
