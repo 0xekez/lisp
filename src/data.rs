@@ -4,6 +4,7 @@
 
 use crate::compiler::JIT;
 use crate::Expr;
+use crate::PreorderStatus;
 use crate::Word;
 
 use cranelift_module::Module;
@@ -25,12 +26,13 @@ impl Expr {
                     None
                 }
             }
+            Expr::String(_) => Some(self.immediate_rep()),
             _ => None,
         }
     }
 }
 
-/// Information about data that will be compiled into the programs
+/// Information about data that will be compiled into the program's
 /// data section.
 #[derive(Debug)]
 pub struct LustData {
@@ -42,23 +44,48 @@ pub struct LustData {
     pub data: Word,
 }
 
-/// Collects all of the complex constants in the program and marshals
-/// them into a list.
-pub(crate) fn collect_data(program: &[Expr]) -> Vec<LustData> {
+fn collect_data_w_count(program: &[Expr], count: &mut usize) -> Vec<LustData> {
     let mut res = Vec::new();
 
     for e in program {
-        e.postorder_traverse(&mut |e: &Expr| {
-            if let Some(repr) = e.is_complex_const() {
+        e.preorder_traverse(&mut |e: &Expr| {
+            if let Some((_, args)) = e.is_foreign_call() {
+                res.extend(collect_data_w_count(args, count));
+                return PreorderStatus::Skip;
+            } else if let Some(repr) = e.is_complex_const() {
                 res.push(LustData {
-                    name: format!("__anon_data_{}", res.len()),
+                    name: format!("__anon_data_{}", count),
                     data: repr,
-                })
+                });
+                *count += 1;
             }
-        })
+            PreorderStatus::Continue
+        });
     }
 
     res
+}
+
+/// Collects all of the complex constants in the program and marshals
+/// them into a list.
+pub(crate) fn collect_data(program: &[Expr]) -> Vec<LustData> {
+    let mut count = 0;
+    collect_data_w_count(program, &mut count)
+}
+
+fn replace_data_w_count(program: &mut [Expr], data: &[LustData], count: &mut usize) {
+    for e in program {
+        e.preorder_traverse_mut(&mut |e: &mut Expr| {
+            if let Some((_, args)) = e.is_foreign_call_mut() {
+                replace_data_w_count(args, data, count);
+                return PreorderStatus::Skip;
+            } else if let Some(_) = e.is_complex_const() {
+                *e = Expr::Symbol(data[*count].name.clone());
+                *count += 1;
+            }
+            PreorderStatus::Continue
+        });
+    }
 }
 
 /// Replaces all of the complex constants in the program with a symbol
@@ -78,14 +105,7 @@ pub(crate) fn collect_data(program: &[Expr]) -> Vec<LustData> {
 /// by this pass.
 pub(crate) fn replace_data(program: &mut [Expr], data: &[LustData]) {
     let mut count = 0;
-    for e in program {
-        e.postorder_traverse_mut(&mut |e: &mut Expr| {
-            if let Some(_) = e.is_complex_const() {
-                *e = Expr::Symbol(data[count].name.clone());
-                count += 1;
-            }
-        })
-    }
+    replace_data_w_count(program, data, &mut count);
 }
 
 /// Gives ownership of DATA to JIT and assocaites its name with its
@@ -132,7 +152,7 @@ mod tests {
 
             if res.errors.is_empty() {
                 let expr = res.expr.unwrap();
-                exprs.push(expr.into_expr());
+                exprs.push(expr.into_expr().unwrap());
             } else {
                 panic!("parse error!".to_string());
             }

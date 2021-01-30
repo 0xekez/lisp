@@ -4,6 +4,7 @@ pub mod conversions;
 pub mod data;
 pub mod errors;
 pub mod escape;
+pub mod foreign;
 pub mod heap;
 pub mod locals;
 pub mod location;
@@ -31,26 +32,31 @@ pub enum Expr {
     Nil,
     List(Vec<Expr>),
     Symbol(String),
+    String(std::ffi::CString),
 }
 
 impl crate::parser::Expr {
     /// Converts an Expr as understood by the parser into an Expr as
     /// understood by the compiler.
-    pub(crate) fn into_expr(self) -> Expr {
-        match self.val {
+    pub(crate) fn into_expr(self) -> Result<Expr, String> {
+        Ok(match self.val {
             ExprVal::Number(i) => Expr::Integer(i),
             ExprVal::Id(s) => Expr::Symbol(s),
             ExprVal::List(v) => {
                 if v.is_empty() {
                     Expr::Nil
                 } else {
-                    Expr::List(v.into_iter().map(|e| e.into_expr()).collect())
+                    Expr::List(
+                        v.into_iter()
+                            .map(|e| e.into_expr())
+                            .collect::<Result<Vec<Expr>, String>>()?,
+                    )
                 }
             }
-            ExprVal::String(s) => {
-                Expr::List(s.chars().into_iter().map(|c| Expr::Char(c)).collect())
-            }
-        }
+            ExprVal::String(s) => Expr::String(
+                std::ffi::CString::new(s).map_err(|e| format!("unsupported string: {} ", e))?,
+            ),
+        })
     }
 }
 
@@ -111,6 +117,38 @@ impl Expr {
         }
         Ok(PreorderStatus::Continue)
     }
+
+    pub(crate) fn preorder_traverse<F>(&self, f: &mut F) -> PreorderStatus
+    where
+        F: FnMut(&Expr) -> PreorderStatus,
+    {
+        let status = f(self);
+        if let PreorderStatus::Skip = status {
+            return status;
+        }
+        if let Expr::List(v) = self {
+            for e in v {
+                e.preorder_traverse(f);
+            }
+        }
+        PreorderStatus::Continue
+    }
+
+    pub(crate) fn preorder_traverse_mut<F>(&mut self, f: &mut F) -> PreorderStatus
+    where
+        F: FnMut(&mut Expr) -> PreorderStatus,
+    {
+        let status = f(self);
+        if let PreorderStatus::Skip = status {
+            return status;
+        }
+        if let Expr::List(v) = self {
+            for e in v {
+                e.preorder_traverse_mut(f);
+            }
+        }
+        PreorderStatus::Continue
+    }
 }
 
 /// Roundtrips a string by spinning up a JIT and executing it. Returns
@@ -126,7 +164,7 @@ pub fn roundtrip_string(input: &str) -> Result<Expr, String> {
         }
         if res.errors.is_empty() {
             let expr = res.expr.unwrap();
-            exprs.push(expr.into_expr());
+            exprs.push(expr.into_expr()?);
         } else {
             return Err("parse error!".to_string());
         }

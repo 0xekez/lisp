@@ -490,7 +490,7 @@ mod tests {
             }
             if res.errors.is_empty() {
                 let expr = res.expr.unwrap();
-                exprs.push(expr.into_expr());
+                exprs.push(expr.into_expr().unwrap());
             } else {
                 panic!("parse error!".to_string());
             }
@@ -538,7 +538,7 @@ mod tests {
             }
             if res.errors.is_empty() {
                 let expr = res.expr.unwrap();
-                exprs.push(expr.into_expr());
+                exprs.push(expr.into_expr().unwrap());
             } else {
                 panic!("parse error!".to_string());
             }
@@ -572,7 +572,7 @@ mod tests {
             }
             if res.errors.is_empty() {
                 let expr = res.expr.unwrap();
-                exprs.push(expr.into_expr());
+                exprs.push(expr.into_expr().unwrap());
             } else {
                 panic!("parse error!".to_string());
             }

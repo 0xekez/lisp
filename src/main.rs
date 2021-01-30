@@ -7,7 +7,7 @@ fn main() {
         return;
     }
 
-    let res = lustc::roundtrip_file(&args[1]);
-
-    println!("=> {:?}", res);
+    if let Err(s) = lustc::roundtrip_file(&args[1]) {
+        println!("error: {}", s)
+    }
 }

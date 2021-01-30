@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use crate::conditional;
 use crate::data;
 use crate::escape;
+use crate::foreign;
 use crate::heap::define_alloc;
 use crate::locals;
 use crate::primitives;
@@ -112,6 +113,8 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
                 locals::emit_set(symbol, binding, ctx)?
             } else if let Some((cond, then, else_)) = expr.is_conditional() {
                 conditional::emit_conditional(cond, then, else_, ctx)?
+            } else if let Some((name, args)) = expr.is_foreign_call() {
+                foreign::emit_foreign_call(&name, args, ctx)?
             } else if let Some((head, args)) = expr.is_fncall() {
                 procedures::emit_fncall(head, args, ctx)?
             } else if v.len() == 0 {
@@ -120,6 +123,12 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
             } else {
                 return Err(format!("illegal function application {:?}", v));
             }
+        }
+        Expr::String(s) => {
+            return Err(format!(
+                "unexpected string data in compilation pass: ({:?})",
+                s
+            ))
         }
     })
 }

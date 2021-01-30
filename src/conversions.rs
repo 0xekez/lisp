@@ -1,3 +1,5 @@
+use std::os::raw::c_char;
+
 use crate::{Expr, UWord, Word};
 
 pub(crate) static FIXNUM_SHIFT: Word = 2;
@@ -27,8 +29,15 @@ pub(crate) static PAIR_TAG: Word = 0b001;
 /// Tag for a closure object
 pub(crate) static CLOSURE_TAG: Word = 0b110;
 
+/// Tag for a string object
+pub(crate) static STRING_TAG: Word = 0b011;
+
 pub fn word_is_char(what: Word) -> bool {
     what & CHAR_MASK == CHAR_TAG
+}
+
+pub fn word_is_string(what: Word) -> bool {
+    what & HEAP_TAG_MASK == STRING_TAG
 }
 
 pub fn word_is_int(what: Word) -> bool {
@@ -57,6 +66,7 @@ pub fn word_is_immediate(what: Word) -> bool {
         || word_is_bool(what)
         || word_is_nil(what)
         || word_is_pair(what)
+        || word_is_string(what)
 }
 
 pub fn word_get_object_address(what: Word) -> UWord {
@@ -87,6 +97,17 @@ pub fn list_from_immediate(ptr_word: Word) -> Expr {
     Expr::List(vec![first, rest])
 }
 
+pub fn string_to_immediate(string: &std::ffi::CString) -> Word {
+    let ptr = string.clone().into_raw() as Word;
+    ptr | STRING_TAG
+}
+
+pub fn string_from_immediate(string: Word) -> Expr {
+    debug_assert_eq!(string & HEAP_TAG_MASK, STRING_TAG);
+    let ptr = (string & HEAP_PTR_MASK) as *mut c_char;
+    Expr::String(unsafe { std::ffi::CString::from_raw(ptr) })
+}
+
 impl Expr {
     pub fn is_immediate(&self) -> bool {
         true
@@ -101,6 +122,7 @@ impl Expr {
             Expr::Nil => NIL_VALUE,
             Expr::List(v) => list_to_immediate(v),
             Expr::Symbol(_) => todo!("symbol immediates unsupported"),
+            Expr::String(s) => string_to_immediate(s),
         }
     }
 
@@ -116,6 +138,7 @@ impl Expr {
                 Expr::Bool(unsafe { std::mem::transmute_copy(&(what >> BOOL_SHIFT)) })
             }
             _ if word_is_nil(what) => Expr::Nil,
+            _ if word_is_string(what) => string_from_immediate(what),
             _ => Expr::Nil,
         }
     }

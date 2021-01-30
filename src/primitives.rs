@@ -552,7 +552,13 @@ fn emit_word_to_bool(accum: Value, builder: &mut FunctionBuilder) -> Value {
 }
 
 pub(crate) fn string_is_builtin(s: &str) -> bool {
-    string_is_primitive(s) || s == "if" || s == "quote" || s == "let" || s == "fn" || s == "set"
+    string_is_primitive(s)
+        || s == "if"
+        || s == "quote"
+        || s == "let"
+        || s == "fn"
+        || s == "set"
+        || s == "foreign-call"
 }
 
 pub(crate) fn string_is_primitive(s: &str) -> bool {
@@ -1012,6 +1018,17 @@ mod tests {
         let source = r#"
 (let call (fn (f a) (f a)))
 (call add1 1)
+"#;
+        let res = roundtrip_string(source).unwrap();
+        assert_eq!(Expr::Integer(2), res)
+    }
+
+    #[test]
+    fn higher_order_builtin_in_closure() {
+        let source = r#"
+(let - sub)
+(let minus-one (fn (n) (- n 1)))
+(minus-one 3)
 "#;
         let res = roundtrip_string(source).unwrap();
         assert_eq!(Expr::Integer(2), res)
