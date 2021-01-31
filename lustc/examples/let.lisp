@@ -1,0 +1,6 @@
+(let free 10)
+(let add (fn (a b) (sub a b)))
+(let n 11)
+(let f (fn (n)
+	   (add free n)))
+(f 12)
