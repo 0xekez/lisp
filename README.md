@@ -11,21 +11,21 @@ core. Here's an example REPL session:
 hello Lust!
 ```
 
-The idea for Lust stems from a frusturation with other high level
-languages which are fun to start but rapidly get too slow to
-maintain. Things don't need to be like this. With modern JITs and some
-care we can have a **high level language and reasonable performance**.
+Lust stems from a frusturation with other high level languages which
+are fun to start but rapidly get too slow to maintain. Things don't
+need to be like this. With modern JITs and some care we can have a
+**high level language and reasonable performance**.
+
+You can find documentation about Lust
+[here](https://zmedley.com/lust).
+
+## Project Status
 
 Lust has both an interpreter and compiler which live in the `lust` and
 `lustc` subdirectories respectively. Both are written in Rust. The
 compiler uses
 [Cranelift](https://github.com/bytecodealliance/wasmtime/tree/main/cranelift)
 as a backend and is pretty quick.
-
-You can find documentation about Lust
-[here](https://zmedley.com/lust).
-
-## Project Status
 
 Lust is currently under heavy development. Things will break and the
 documentation is now slightly incomplete in places under active
