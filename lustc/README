@@ -1,6 +1,6 @@
 A work in progress compiler for Lust following Abdulaziz Ghuloum's "An
 Incremental Approach to Compiler Construction".
 
-A working interpreter for Lust can be found [here](https://github.com/ZekeMedley/lust/).
+A working interpreter for Lust can be found [here](https://github.com/ZekeMedley/lust/lust).
 
 Documentation for Lust can be found [here](https://zmedley.com/lust/).
