@@ -559,6 +559,7 @@ pub(crate) fn string_is_builtin(s: &str) -> bool {
         || s == "fn"
         || s == "set"
         || s == "foreign-call"
+        || s == "error"
 }
 
 pub(crate) fn string_is_primitive(s: &str) -> bool {

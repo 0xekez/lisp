@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use crate::conditional;
 use crate::data;
 use crate::escape;
+use crate::fatal;
 use crate::foreign;
 use crate::heap::define_alloc;
 use crate::locals;
@@ -113,6 +114,8 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
                 locals::emit_set(symbol, binding, ctx)?
             } else if let Some((cond, then, else_)) = expr.is_conditional() {
                 conditional::emit_conditional(cond, then, else_, ctx)?
+            } else if let Some((message, exit_code)) = expr.is_error() {
+                fatal::emit_error(message, exit_code, ctx)?
             } else if let Some((name, args)) = expr.is_foreign_call() {
                 foreign::emit_foreign_call(&name, args, ctx)?
             } else if let Some((head, args)) = expr.is_fncall() {
