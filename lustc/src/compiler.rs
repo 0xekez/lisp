@@ -73,6 +73,7 @@ impl Default for JIT {
             data_ctx: DataContext::new(),
         };
         define_alloc(&mut jit).unwrap();
+        crate::fatal::emit_error_strings(&mut jit).unwrap();
         jit
     }
 }

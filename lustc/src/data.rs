@@ -2,11 +2,12 @@
 //! time. Programs can then access them directly instead of needing to
 //! do any work themselves. Herein lies the code for that.
 
-use crate::compiler::JIT;
+use crate::compiler::{Context, JIT};
 use crate::Expr;
 use crate::PreorderStatus;
 use crate::Word;
 
+use cranelift::prelude::*;
 use cranelift_module::Module;
 
 impl Expr {
@@ -86,6 +87,20 @@ fn replace_data_w_count(program: &mut [Expr], data: &[LustData], count: &mut usi
             PreorderStatus::Continue
         });
     }
+}
+
+pub(crate) fn emit_data_access(name: &str, ctx: &mut Context) -> Result<Value, String> {
+    let sym = ctx
+        .module
+        .declare_data(name, cranelift_module::Linkage::Export, true, false)
+        .map_err(|e| e.to_string())?;
+    let local_id = ctx.module.declare_data_in_func(sym, ctx.builder.func);
+
+    let data_ptr = ctx.builder.ins().symbol_value(ctx.word, local_id);
+    Ok(ctx
+        .builder
+        .ins()
+        .load(ctx.word, MemFlags::new(), data_ptr, 0))
 }
 
 /// Replaces all of the complex constants in the program with a symbol

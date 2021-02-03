@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::compiler::Context;
 use crate::compiler::{emit_expr, JIT};
 use crate::heap::emit_alloc;
 use crate::locals::emit_var_decl_and_assign;
 use crate::primitives::string_is_builtin;
 use crate::Expr;
+use crate::{compiler::Context, fatal::emit_check_callable};
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
 
@@ -176,6 +176,8 @@ pub fn emit_procedure(
 /// anonymous function emits a direct call. Otherwise, emits an
 /// indirect one to the function pointed to by the argument variable.
 pub(crate) fn emit_fncall(head: &Expr, args: &[Expr], ctx: &mut Context) -> Result<Value, String> {
+    emit_check_callable(head, ctx)?;
+
     let word = ctx.module.target_config().pointer_type();
 
     let mut sig = ctx.module.make_signature();

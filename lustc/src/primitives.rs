@@ -224,6 +224,23 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
         },
     )?);
 
+    res.push(emit_primitive(
+        "closure?",
+        1,
+        jit,
+        |builder, block, _module| {
+            let args = builder.block_params(block);
+            let accum = args[0];
+
+            let accum = builder.ins().band_imm(accum, conversions::HEAP_TAG_MASK);
+            let accum = builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::CLOSURE_TAG);
+            let accum = builder.ins().bint(word, accum);
+            emit_word_to_bool(accum, builder)
+        },
+    )?);
+
     res.push(emit_primitive("add", 2, jit, |builder, block, _module| {
         let args = builder.block_params(block);
         let left = args[0];
@@ -440,6 +457,22 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let accum = ctx.builder.ins().bint(ctx.word, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
+        "closure?" => {
+            check_arg_len("closure?", args, 1)?;
+
+            let accum = emit_expr(&args[0], ctx)?;
+
+            let accum = ctx
+                .builder
+                .ins()
+                .band_imm(accum, conversions::HEAP_TAG_MASK);
+            let accum = ctx
+                .builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::CLOSURE_TAG);
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            emit_word_to_bool(accum, &mut ctx.builder)
+        }
         "add" => {
             check_arg_len("add", args, 2)?;
 
@@ -572,6 +605,7 @@ pub(crate) fn string_is_primitive(s: &str) -> bool {
         || s == "boolean?"
         || s == "integer?"
         || s == "pair?"
+        || s == "closure?"
         || s == "add"
         || s == "sub"
         || s == "mul"
@@ -1033,5 +1067,14 @@ mod tests {
 "#;
         let res = roundtrip_string(source).unwrap();
         assert_eq!(Expr::Integer(2), res)
+    }
+
+    #[test]
+    fn is_closure() {
+        let source = r#"
+(closure? ((fn () (fn (n) n))))
+"#;
+        let res = roundtrip_string(source).unwrap();
+        assert_eq!(Expr::Bool(true), res)
     }
 }

@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 
 use cranelift::prelude::*;
-use cranelift_module::Module;
 
 use crate::compiler::emit_expr;
 use crate::compiler::Context;
@@ -114,17 +113,7 @@ pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, St
 
         emit_make_closure(name, &free_variables, ctx)
     } else if name.starts_with("__anon_data_") {
-        let sym = ctx
-            .module
-            .declare_data(name, cranelift_module::Linkage::Export, true, false)
-            .map_err(|e| e.to_string())?;
-        let local_id = ctx.module.declare_data_in_func(sym, ctx.builder.func);
-
-        let data_ptr = ctx.builder.ins().symbol_value(ctx.word, local_id);
-        Ok(ctx
-            .builder
-            .ins()
-            .load(ctx.word, MemFlags::new(), data_ptr, 0))
+        crate::data::emit_data_access(name, ctx)
     } else if name.starts_with("e_") {
         let var = ctx.env.get(name).ok_or(format!(
             "internal error: use of undeclared variable ({})",
