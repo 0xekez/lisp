@@ -22,10 +22,16 @@ impl Expr {
 }
 
 pub(crate) fn emit_error_strings(jit: &mut JIT) -> Result<(), String> {
-    let error_strings = [(
-        "__anon_data_bad_call_type",
-        "fatal error: non-closure object in head position of list",
-    )];
+    let error_strings = [
+        (
+            "__anon_data_bad_call_type",
+            "fatal error: non-closure object in head position of list",
+        ),
+        (
+            "__anon_data_bad_arg_count",
+            "fatal error: wrong number of arguments in function call",
+        ),
+    ];
     let error_data = error_strings
         .iter()
         .map(|(name, msg)| -> Result<LustData, std::ffi::NulError> {
@@ -52,16 +58,16 @@ pub(crate) fn emit_error(
     foreign::emit_foreign_call("exit", &[exit_code.clone()], ctx)
 }
 
-pub(crate) fn emit_check_callable(query: &Expr, ctx: &mut Context) -> Result<(), String> {
-    let accum = compiler::emit_expr(query, ctx)?;
-    let accum = ctx
+pub(crate) fn emit_check_callable(query: &Expr, ctx: &mut Context) -> Result<Value, String> {
+    let closure_ptr = compiler::emit_expr(query, ctx)?;
+    let tag = ctx
         .builder
         .ins()
-        .band_imm(accum, conversions::HEAP_TAG_MASK);
+        .band_imm(closure_ptr, conversions::HEAP_TAG_MASK);
     let cond = ctx
         .builder
         .ins()
-        .icmp_imm(IntCC::Equal, accum, conversions::CLOSURE_TAG);
+        .icmp_imm(IntCC::Equal, tag, conversions::CLOSURE_TAG);
 
     let error_block = ctx.builder.create_block();
     let ok_block = ctx.builder.create_block();
@@ -74,6 +80,41 @@ pub(crate) fn emit_check_callable(query: &Expr, ctx: &mut Context) -> Result<(),
 
     emit_error(
         &Expr::Symbol("__anon_data_bad_call_type".to_string()),
+        &Expr::Integer(-1),
+        ctx,
+    )?;
+
+    // This ought to be unreachable but it appeases the code
+    // generator.
+    ctx.builder.ins().jump(ok_block, &[]);
+
+    ctx.builder.switch_to_block(ok_block);
+    ctx.builder.seal_block(ok_block);
+
+    Ok(closure_ptr)
+}
+
+pub(crate) fn emit_check_arg_count(
+    expected: usize,
+    actual: Value,
+    ctx: &mut Context,
+) -> Result<(), String> {
+    let cond = ctx
+        .builder
+        .ins()
+        .icmp_imm(IntCC::Equal, actual, expected as i64);
+
+    let error_block = ctx.builder.create_block();
+    let ok_block = ctx.builder.create_block();
+
+    ctx.builder.ins().brz(cond, error_block, &[]);
+    ctx.builder.ins().jump(ok_block, &[]);
+
+    ctx.builder.switch_to_block(error_block);
+    ctx.builder.seal_block(error_block);
+
+    emit_error(
+        &Expr::Symbol("__anon_data_bad_arg_count".to_string()),
         &Expr::Integer(-1),
         ctx,
     )?;

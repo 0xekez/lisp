@@ -77,6 +77,9 @@ pub fn emit_procedure(
 ) -> Result<(), String> {
     let word = jit.module.target_config().pointer_type();
 
+    // Argument count param.
+    jit.context.func.signature.params.push(AbiParam::new(word));
+
     // Indicate that the function takes some number of words as
     // arguments. This says nothing yet of the names of those
     // paramaters.
@@ -108,8 +111,11 @@ pub fn emit_procedure(
         Vec::new(),
     );
 
+    let arg_count = ctx.builder.block_params(entry_block)[0];
+    crate::fatal::emit_check_arg_count(params.len(), arg_count, &mut ctx)?;
+
     for (i, p) in params.iter().enumerate() {
-        let val = ctx.builder.block_params(entry_block)[i];
+        let val = ctx.builder.block_params(entry_block)[i + 1];
         // Params that are escaped need to be initialized
         // appropriately.
         let val = if p.starts_with("e_") {
@@ -122,7 +128,7 @@ pub fn emit_procedure(
         emit_var_decl_and_assign(p, val, &mut ctx)?;
     }
 
-    let closure_ptr = ctx.builder.block_params(entry_block)[params.len()];
+    let closure_ptr = ctx.builder.block_params(entry_block)[params.len() + 1];
     let free_vars = fnmap
         .get(name)
         .map(|f| &f.free_variables)
@@ -176,25 +182,31 @@ pub fn emit_procedure(
 /// anonymous function emits a direct call. Otherwise, emits an
 /// indirect one to the function pointed to by the argument variable.
 pub(crate) fn emit_fncall(head: &Expr, args: &[Expr], ctx: &mut Context) -> Result<Value, String> {
-    emit_check_callable(head, ctx)?;
+    let closure_ptr = emit_check_callable(head, ctx)?;
 
     let word = ctx.module.target_config().pointer_type();
 
     let mut sig = ctx.module.make_signature();
+
+    // Argument that is the number of args being passed in. Used for
+    // validating the number of arguments and varadic functions.
+    sig.params.push(AbiParam::new(word));
 
     for _ in args {
         sig.params.push(AbiParam::new(word));
     }
     // Also push an argument which is the closure.
     sig.params.push(AbiParam::new(word));
+
     sig.returns.push(AbiParam::new(word));
 
-    let mut args: Vec<_> = args
-        .iter()
-        .map(|e| emit_expr(e, ctx))
-        .collect::<Result<Vec<_>, _>>()?;
+    // First argument is the number of arguments we're going to pass in.
+    let mut argsc = vec![ctx.builder.ins().iconst(word, args.len() as i64)];
 
-    let closure_ptr = emit_expr(head, ctx)?;
+    for arg in args {
+        argsc.push(emit_expr(arg, ctx)?)
+    }
+
     let closure_ptr = ctx
         .builder
         .ins()
@@ -205,11 +217,11 @@ pub(crate) fn emit_fncall(head: &Expr, args: &[Expr], ctx: &mut Context) -> Resu
         .ins()
         .load(ctx.word, MemFlags::new(), closure_ptr, 0);
 
-    args.push(closure_ptr);
+    argsc.push(closure_ptr);
 
     let sig_ref = ctx.builder.import_signature(sig);
 
-    let call = ctx.builder.ins().call_indirect(sig_ref, fn_ptr, &args);
+    let call = ctx.builder.ins().call_indirect(sig_ref, fn_ptr, &argsc);
     let res = ctx.builder.inst_results(call)[0];
 
     Ok(res)
@@ -440,7 +452,8 @@ pub(crate) fn emit_get_fn_addr(name: &str, ctx: &mut Context) -> Result<Value, S
     let argcount = ctx
         .fnmap
         .get(name)
-        .map(|f| f.params.len() + 1)
+        // Two additional paramters the closure pointer and the arg count pointer.
+        .map(|f| f.params.len() + 2)
         .ok_or(format!("internal error finding arg count for {}", name))?;
     let mut sig = ctx.module.make_signature();
     for _ in 0..argcount {
