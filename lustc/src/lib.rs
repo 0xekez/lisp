@@ -230,4 +230,14 @@ mod tests {
         let expected = Expr::Integer(10);
         test_file_evaluation("examples/cons.lisp", expected)
     }
+
+    #[test]
+    fn builtin_reassign() {
+        let input = r#"
+(let cons cons)
+(cons 1 2)
+"#;
+        let expected = Expr::List(vec![Expr::Integer(1), Expr::Integer(2)]);
+        test_string_evaluation(input, expected);
+    }
 }
