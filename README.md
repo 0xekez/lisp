@@ -1,4 +1,5 @@
 # Lust
+![Tests](https://github.com/ZekeMedley/lust/workflows/Rust/badge.svg)
 
 Lust is a Lisp programming langauge built on a small, solid
 core. Here's an example REPL session:
