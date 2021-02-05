@@ -112,7 +112,7 @@ fn make_expr_names_unique(
         if let Some(_) = expr.is_let() {
             let old_name = expr.get_let_name()?;
 
-            let name_exists = env.contains_key(&old_name); // && !expr.get_let_value_mut()?.is_fndef().is_some();
+            let name_exists = env.contains_key(&old_name) || string_is_builtin(&old_name);
 
             if name_exists {
                 make_expr_names_unique(expr.get_let_value_mut()?, env, count)?;

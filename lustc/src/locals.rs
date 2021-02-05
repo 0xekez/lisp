@@ -116,7 +116,7 @@ pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, St
         crate::data::emit_data_access(name, ctx)
     } else if name.starts_with("e_") {
         let var = ctx.env.get(name).ok_or(format!(
-            "internal error: use of undeclared variable ({})",
+            "internal error: (free variable) use of undeclared variable ({})",
             name
         ))?;
         let location = ctx.builder.use_var(*var);
@@ -128,7 +128,7 @@ pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, St
         match ctx.env.get(name) {
             Some(v) => Ok(ctx.builder.use_var(*v)),
             None => Err(format!(
-                "internal error: use of undeclared variable ({})",
+                "internal error: (regular lookup) use of undeclared variable ({})",
                 name
             )),
         }

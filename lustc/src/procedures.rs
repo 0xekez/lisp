@@ -427,7 +427,7 @@ pub(crate) fn emit_make_closure(
             match ctx.env.get(free) {
                 Some(v) => Ok(ctx.builder.use_var(*v)),
                 None => Err(format!(
-                    "internal error: use of undeclared variable ({})",
+                    "internal error: (constructing closure) use of undeclared variable ({})",
                     free
                 )),
             }?
