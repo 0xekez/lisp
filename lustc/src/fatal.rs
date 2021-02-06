@@ -2,7 +2,7 @@ use crate::{
     compiler::{self, Context, JIT},
     conversions,
     data::LustData,
-    foreign, Expr,
+    foreign, Expr, Word,
 };
 use cranelift::prelude::*;
 
@@ -26,6 +26,10 @@ pub(crate) fn emit_error_strings(jit: &mut JIT) -> Result<(), String> {
         (
             "__anon_data_bad_call_type",
             "fatal error: non-closure object in head position of list",
+        ),
+        (
+            "__anon_data_bad_arg_type",
+            "fatal error: runtime type missmatch",
         ),
         (
             "__anon_data_bad_arg_count",
@@ -56,6 +60,64 @@ pub(crate) fn emit_error(
 ) -> Result<Value, String> {
     foreign::emit_foreign_call("puts", &[message.clone()], ctx)?;
     foreign::emit_foreign_call("exit", &[exit_code.clone()], ctx)
+}
+
+pub(crate) fn emit_check_tag(
+    query: Value,
+    tag: Word,
+    mask: Word,
+    ctx: &mut Context,
+) -> Result<(), String> {
+    let tag_val = ctx.builder.ins().band_imm(query, mask);
+    let is_tag = ctx.builder.ins().icmp_imm(IntCC::Equal, tag_val, tag);
+
+    let error_block = ctx.builder.create_block();
+    let ok_block = ctx.builder.create_block();
+
+    ctx.builder.ins().brz(is_tag, error_block, &[]);
+    ctx.builder.ins().jump(ok_block, &[]);
+
+    ctx.builder.switch_to_block(error_block);
+    ctx.builder.seal_block(error_block);
+
+    emit_error(
+        &Expr::Symbol("__anon_data_bad_arg_type".to_string()),
+        &Expr::Integer(-1),
+        ctx,
+    )?;
+
+    ctx.builder.ins().jump(ok_block, &[]);
+
+    ctx.builder.switch_to_block(ok_block);
+    ctx.builder.seal_block(ok_block);
+
+    Ok(())
+}
+
+pub(crate) fn emit_check_int(query: Value, ctx: &mut Context) -> Result<(), String> {
+    emit_check_tag(
+        query,
+        conversions::FIXNUM_TAG,
+        conversions::FIXNUM_MASK,
+        ctx,
+    )
+}
+
+pub(crate) fn emit_check_char(query: Value, ctx: &mut Context) -> Result<(), String> {
+    emit_check_tag(query, conversions::CHAR_TAG, conversions::CHAR_MASK, ctx)
+}
+
+pub(crate) fn emit_check_bool(query: Value, ctx: &mut Context) -> Result<(), String> {
+    emit_check_tag(query, conversions::BOOL_TAG, conversions::BOOL_MASK, ctx)
+}
+
+pub(crate) fn emit_check_pair(query: Value, ctx: &mut Context) -> Result<(), String> {
+    emit_check_tag(
+        query,
+        conversions::PAIR_TAG,
+        conversions::HEAP_TAG_MASK,
+        ctx,
+    )
 }
 
 pub(crate) fn emit_check_callable(query: &Expr, ctx: &mut Context) -> Result<Value, String> {

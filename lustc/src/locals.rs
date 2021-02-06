@@ -165,6 +165,7 @@ pub(crate) fn emit_var_decl_and_assign(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::roundtrip_string;
 
     fn test_evaluation(exprs: &mut [Expr], expected: Expr) {
         assert_eq!(crate::compiler::roundtrip_program(exprs).unwrap(), expected)
@@ -224,20 +225,12 @@ mod tests {
 
     #[test]
     fn clothed_var() {
-        let mut ast = [
-            Expr::List(vec![
-                Expr::Symbol("let".to_string()),
-                Expr::Symbol("tel".to_string()),
-                Expr::Integer(10),
-            ]),
-            Expr::List(vec![
-                Expr::Symbol("add".to_string()),
-                Expr::Integer(1),
-                Expr::Symbol("tel".to_string()),
-            ]),
-        ];
-        let expected = Expr::Integer(11);
-        test_evaluation(&mut ast, expected);
+        let source = r#"
+(let tel 10)
+(add 1 tel)
+"#;
+        let res = roundtrip_string(source).unwrap();
+        assert_eq!(res, Expr::Integer(11))
     }
 
     #[test]

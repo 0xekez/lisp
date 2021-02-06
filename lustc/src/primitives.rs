@@ -11,6 +11,7 @@ use crate::compiler::emit_expr;
 use crate::compiler::Context;
 use crate::compiler::JIT;
 use crate::conversions;
+use crate::fatal;
 use crate::fatal::emit_check_arg_count;
 use crate::heap::emit_alloc;
 use crate::procedures::LustFn;
@@ -113,6 +114,8 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
         let args = ctx.builder.block_params(block);
         let accum = args[1];
 
+        fatal::emit_check_int(accum, ctx)?;
+
         Ok(ctx
             .builder
             .ins()
@@ -126,6 +129,8 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
         let args = ctx.builder.block_params(block);
         let accum = args[1];
 
+        fatal::emit_check_int(accum, ctx)?;
+
         let accum = ctx.builder.ins().ishl_imm(accum, 6);
         let accum = ctx.builder.ins().bor_imm(accum, conversions::CHAR_TAG);
         Ok(accum)
@@ -137,6 +142,8 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
         emit_check_arg_count(1, args[0], ctx)?;
         let args = ctx.builder.block_params(block);
         let accum = args[1];
+
+        fatal::emit_check_char(accum, ctx)?;
 
         let accum = ctx.builder.ins().ushr_imm(accum, 6);
         Ok(accum)
@@ -180,6 +187,8 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
         emit_check_arg_count(1, args[0], ctx)?;
         let args = ctx.builder.block_params(block);
         let accum = args[1];
+
+        fatal::emit_check_bool(accum, ctx)?;
 
         // To get the not of a boolean, subtract one from it and
         // then take the absolute value.
@@ -271,6 +280,9 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
         let left = args[1];
         let right = args[2];
 
+        fatal::emit_check_int(left, ctx)?;
+        fatal::emit_check_int(right, ctx)?;
+
         Ok(ctx.builder.ins().iadd(left, right))
     })?);
 
@@ -282,6 +294,10 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
 
         let left = args[1];
         let right = args[2];
+
+        fatal::emit_check_int(left, ctx)?;
+        fatal::emit_check_int(right, ctx)?;
+
         let right = ctx.builder.ins().ineg(right);
 
         Ok(ctx.builder.ins().iadd(left, right))
@@ -295,6 +311,9 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
 
         let left = args[1];
         let right = args[2];
+
+        fatal::emit_check_int(left, ctx)?;
+        fatal::emit_check_int(right, ctx)?;
 
         let accum = ctx.builder.ins().imul(left, right);
 
@@ -331,6 +350,9 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
         let left = args[1];
         let right = args[2];
 
+        fatal::emit_check_int(left, ctx)?;
+        fatal::emit_check_int(right, ctx)?;
+
         let accum = ctx.builder.ins().icmp(IntCC::SignedLessThan, left, right);
         let accum = ctx.builder.ins().bint(word, accum);
         Ok(emit_word_to_bool(accum, &mut ctx.builder))
@@ -344,6 +366,9 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
 
         let left = args[1];
         let right = args[2];
+
+        fatal::emit_check_int(left, ctx)?;
+        fatal::emit_check_int(right, ctx)?;
 
         let accum = ctx
             .builder
@@ -380,6 +405,8 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
 
         let pair = args[1];
 
+        fatal::emit_check_pair(pair, ctx)?;
+
         let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
 
         Ok(ctx.builder.ins().load(word, MemFlags::new(), address, 0))
@@ -392,6 +419,8 @@ pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
         let args = ctx.builder.block_params(block);
 
         let pair = args[1];
+
+        fatal::emit_check_pair(pair, ctx)?;
 
         let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
 
@@ -410,6 +439,9 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
         "add1" => {
             check_arg_len("add1", args, 1)?;
             let accum = emit_expr(&args[0], ctx)?;
+
+            fatal::emit_check_int(accum, ctx)?;
+
             ctx.builder
                 .ins()
                 .iadd_imm(accum, Expr::Integer(1).immediate_rep())
@@ -420,6 +452,9 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             // To convert an integer to a character we left shift by 6
             // and then tag it with the character tag.
             let accum = emit_expr(&args[0], ctx)?;
+
+            fatal::emit_check_int(accum, ctx)?;
+
             let accum = ctx.builder.ins().ishl_imm(accum, 6);
             let accum = ctx.builder.ins().bor_imm(accum, conversions::CHAR_TAG);
             accum
@@ -434,6 +469,9 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             // we're assuming the input is an integer and as such
             // there is no need to tag after the right shift.
             let accum = emit_expr(&args[0], ctx)?;
+
+            fatal::emit_check_char(accum, ctx)?;
+
             let accum = ctx.builder.ins().ushr_imm(accum, 6);
             accum
         }
@@ -453,6 +491,7 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             check_arg_len("zero?", args, 1)?;
 
             let accum = emit_expr(&args[0], ctx)?;
+
             let accum =
                 ctx.builder
                     .ins()
@@ -464,6 +503,8 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             check_arg_len("not", args, 1)?;
 
             let accum = emit_expr(&args[0], ctx)?;
+
+            fatal::emit_check_bool(accum, ctx)?;
 
             // To get the not of a boolean, subtract one from it and
             // then take the absolute value.
@@ -540,6 +581,9 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
 
+            fatal::emit_check_int(left, ctx)?;
+            fatal::emit_check_int(right, ctx)?;
+
             ctx.builder.ins().iadd(left, right)
         }
         "sub" => {
@@ -547,6 +591,10 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
 
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
+
+            fatal::emit_check_int(left, ctx)?;
+            fatal::emit_check_int(right, ctx)?;
+
             let right = ctx.builder.ins().ineg(right);
 
             ctx.builder.ins().iadd(left, right)
@@ -556,6 +604,9 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
 
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
+
+            fatal::emit_check_int(left, ctx)?;
+            fatal::emit_check_int(right, ctx)?;
 
             let accum = ctx.builder.ins().imul(left, right);
 
@@ -583,6 +634,9 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
 
+            fatal::emit_check_int(left, ctx)?;
+            fatal::emit_check_int(right, ctx)?;
+
             let accum = ctx.builder.ins().icmp(IntCC::SignedLessThan, left, right);
             let accum = ctx.builder.ins().bint(ctx.word, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
@@ -591,6 +645,9 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             check_arg_len("gt", args, 2)?;
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
+
+            fatal::emit_check_int(left, ctx)?;
+            fatal::emit_check_int(right, ctx)?;
 
             let accum = ctx
                 .builder
@@ -619,6 +676,9 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             check_arg_len("car", args, 1)?;
 
             let pair = emit_expr(&args[0], ctx)?;
+
+            fatal::emit_check_pair(pair, ctx)?;
+
             let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
 
             ctx.builder
@@ -629,6 +689,9 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             check_arg_len("cdr", args, 1)?;
 
             let pair = emit_expr(&args[0], ctx)?;
+
+            fatal::emit_check_pair(pair, ctx)?;
+
             let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
 
             ctx.builder
