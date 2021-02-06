@@ -140,18 +140,25 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
 pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     let mut jit = JIT::default();
 
-    let primitive_fns = primitives::emit_primitives(&mut jit)?;
-
     // Rename symbols so that they are all unique.
     renamer::make_names_unique(program)?;
+
+    // Collect primitives that are used as higher order functions.
+    let higher_order_primitives = primitives::collect_higher_order_primitives(program)?;
+    // Emit the primitive functions that are used in higher order contexts.
+    let primitive_fns = primitives::emit_primitives(&mut jit, higher_order_primitives)?;
 
     // Initialize program data.
     let data = data::collect_data(program);
     // Replace it with references to its location in the JIT.
     data::replace_data(program, &data);
-    // Store the data in the JIT.
-    for d in data {
-        data::create_data(d, &mut jit)?;
+
+    {
+        let _t = crate::timer::timeit("data creation");
+        // Store the data in the JIT.
+        for d in data {
+            data::create_data(d, &mut jit)?;
+        }
     }
 
     // Transforms the program so that anonymous functions are lifted
@@ -177,65 +184,73 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     // Extend the function map with the builtin functions
     fnmap.extend(primitive_fns.into_iter().map(|f| (f.name.clone(), f)));
 
-    // Emit all the non-primitive functions into the JIT.
-    for (_, f) in fnmap.iter().filter(|(name, _)| !string_is_primitive(name)) {
-        emit_procedure(&mut jit, &f.name, &f.params, &f.body, &fnmap)?;
+    {
+        let _t = crate::timer::timeit("procedure compilation");
+        // Emit all the non-primitive functions into the JIT.
+        for (_, f) in fnmap.iter().filter(|(name, _)| !string_is_primitive(name)) {
+            emit_procedure(&mut jit, &f.name, &f.params, &f.body, &fnmap)?;
+        }
     }
 
-    let word = jit.module.target_config().pointer_type();
+    let code_fn = {
+        let _t = crate::timer::timeit("lust_entry compilation");
 
-    // Signature for the function that we're compiling. This function
-    // takes no arguments and returns an integer.
-    jit.context.func.signature.returns.push(AbiParam::new(word));
+        let word = jit.module.target_config().pointer_type();
 
-    // Create a new builder for building our function and create a new
-    // block to compile into.
-    let mut builder = FunctionBuilder::new(&mut jit.context.func, &mut jit.builder_context);
-    let entry_block = builder.create_block();
+        // Signature for the function that we're compiling. This function
+        // takes no arguments and returns an integer.
+        jit.context.func.signature.returns.push(AbiParam::new(word));
 
-    // Give the paramaters that we set up earlier to this entry block.
-    builder.append_block_params_for_function_params(entry_block);
-    // Start putting code in the new block.
-    builder.switch_to_block(entry_block);
+        // Create a new builder for building our function and create a new
+        // block to compile into.
+        let mut builder = FunctionBuilder::new(&mut jit.context.func, &mut jit.builder_context);
+        let entry_block = builder.create_block();
 
-    let env = HashMap::new();
+        // Give the paramaters that we set up earlier to this entry block.
+        builder.append_block_params_for_function_params(entry_block);
+        // Start putting code in the new block.
+        builder.switch_to_block(entry_block);
 
-    let mut ctx = Context::new(builder, &mut jit.module, word, env, fnmap, Vec::new());
+        let env = HashMap::new();
 
-    let vals = program
-        .iter()
-        .map(|e| emit_expr(e, &mut ctx))
-        .collect::<Result<Vec<_>, _>>()?;
+        let mut ctx = Context::new(builder, &mut jit.module, word, env, fnmap, Vec::new());
 
-    // Emit a return instruction to return the result.
-    ctx.builder.ins().return_(&[*vals
-        .last()
-        .ok_or("expected at least one expression".to_string())?]);
+        let vals = program
+            .iter()
+            .map(|e| emit_expr(e, &mut ctx))
+            .collect::<Result<Vec<_>, _>>()?;
 
-    // Clean up
-    ctx.builder.seal_all_blocks();
-    ctx.builder.finalize();
+        // Emit a return instruction to return the result.
+        ctx.builder.ins().return_(&[*vals
+            .last()
+            .ok_or("expected at least one expression".to_string())?]);
 
-    let id = jit
-        .module
-        .declare_function("lust_entry", Linkage::Export, &jit.context.func.signature)
-        .map_err(|e| e.to_string())?;
+        // Clean up
+        ctx.builder.seal_all_blocks();
+        ctx.builder.finalize();
 
-    jit.module
-        .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
-        .map_err(|e| e.to_string())?;
+        let id = jit
+            .module
+            .declare_function("lust_entry", Linkage::Export, &jit.context.func.signature)
+            .map_err(|e| e.to_string())?;
 
-    // If you want to dump the generated IR this is the way:
-    // println!("{}", jit.context.func.display(jit.module.isa()));
+        jit.module
+            .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
+            .map_err(|e| e.to_string())?;
 
-    jit.module.clear_context(&mut jit.context);
+        // If you want to dump the generated IR this is the way:
+        // println!("{}", jit.context.func.display(jit.module.isa()));
 
-    jit.module.finalize_definitions();
+        jit.module.clear_context(&mut jit.context);
 
-    let code_ptr = jit.module.get_finalized_function(id);
+        jit.module.finalize_definitions();
 
-    let code_fn = unsafe { std::mem::transmute::<_, fn() -> i64>(code_ptr) };
+        let code_ptr = jit.module.get_finalized_function(id);
 
+        unsafe { std::mem::transmute::<_, fn() -> i64>(code_ptr) }
+    };
+
+    let _t = crate::timer::timeit("program execution");
     Ok(Expr::from_immediate(code_fn()))
 }
 

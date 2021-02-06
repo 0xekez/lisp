@@ -33,6 +33,7 @@ pub fn annotate_escaped_variables(
     functions: &mut [LustFn],
     program: &mut [Expr],
 ) -> Result<(), String> {
+    let _t = crate::timer::timeit("free variable annotation");
     let mut free_vars = Vec::new();
     for f in functions.iter() {
         free_vars.extend(f.free_variables.iter().cloned())

@@ -70,6 +70,7 @@ fn collect_data_w_count(program: &[Expr], count: &mut usize) -> Vec<LustData> {
 /// Collects all of the complex constants in the program and marshals
 /// them into a list.
 pub(crate) fn collect_data(program: &[Expr]) -> Vec<LustData> {
+    let _t = crate::timer::timeit("data collection pass");
     let mut count = 0;
     collect_data_w_count(program, &mut count)
 }
@@ -119,6 +120,7 @@ pub(crate) fn emit_data_access(name: &str, ctx: &mut Context) -> Result<Value, S
 ///
 /// by this pass.
 pub(crate) fn replace_data(program: &mut [Expr], data: &[LustData]) {
+    let _t = crate::timer::timeit("data replacement pass");
     let mut count = 0;
     replace_data_w_count(program, data, &mut count);
 }

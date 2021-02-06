@@ -1,6 +1,7 @@
 //! Handles primitive functions in Lust.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::*;
@@ -16,6 +17,7 @@ use crate::fatal::emit_check_arg_count;
 use crate::heap::emit_alloc;
 use crate::procedures::LustFn;
 use crate::Expr;
+use crate::PreorderStatus;
 
 impl Expr {
     pub fn is_primcall(&self) -> Option<(&str, &[Expr])> {
@@ -100,335 +102,407 @@ where
     })
 }
 
-pub(crate) fn emit_primitives(jit: &mut JIT) -> Result<Vec<LustFn>, String> {
+/// Collects all of the primitive functions that are used in higher
+/// order contexts.
+pub(crate) fn collect_higher_order_primitives(program: &[Expr]) -> Result<HashSet<String>, String> {
+    let mut res = HashSet::new();
+
+    for e in program {
+        e.preorder_traverse_res(&mut |e| {
+            if let Expr::List(v) = e {
+                for ex in &v[1..] {
+                    if let Expr::Symbol(s) = ex {
+                        if string_is_primitive(s) {
+                            res.insert(s.clone());
+                        } else if string_is_builtin(s) {
+                            // Functions like let and set and if can't be used in higher order contexts.
+                            return Err(format!(
+                                "builtin function ({}) can not be used in a higher order context",
+                                s
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(PreorderStatus::Continue)
+        })?;
+    }
+
+    Ok(res)
+}
+
+pub(crate) fn emit_primitives(
+    jit: &mut JIT,
+    higher_order_primitives: HashSet<String>,
+) -> Result<Vec<LustFn>, String> {
+    let _t = crate::timer::timeit("emit primitives");
+
     let mut res = Vec::new();
 
     let word = jit.module.target_config().pointer_type();
 
-    res.push(emit_primitive("add1", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(1, args[0], ctx)?;
-        // Need to reassign args because we mutably borrowed context
-        // above.
-        let args = ctx.builder.block_params(block);
-        let accum = args[1];
+    if higher_order_primitives.contains("add1") {
+        res.push(emit_primitive("add1", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[0], ctx)?;
+            // Need to reassign args because we mutably borrowed context
+            // above.
+            let args = ctx.builder.block_params(block);
+            let accum = args[1];
 
-        fatal::emit_check_int(accum, ctx)?;
+            fatal::emit_check_int(accum, ctx)?;
 
-        Ok(ctx
-            .builder
-            .ins()
-            .iadd_imm(accum, Expr::Integer(1).immediate_rep()))
-    })?);
+            Ok(ctx
+                .builder
+                .ins()
+                .iadd_imm(accum, Expr::Integer(1).immediate_rep()))
+        })?);
+    }
 
-    res.push(emit_primitive("integer->char", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(1, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-        let accum = args[1];
+    if higher_order_primitives.contains("integer->char") {
+        res.push(emit_primitive("integer->char", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+            let accum = args[1];
 
-        fatal::emit_check_int(accum, ctx)?;
+            fatal::emit_check_int(accum, ctx)?;
 
-        let accum = ctx.builder.ins().ishl_imm(accum, 6);
-        let accum = ctx.builder.ins().bor_imm(accum, conversions::CHAR_TAG);
-        Ok(accum)
-    })?);
+            let accum = ctx.builder.ins().ishl_imm(accum, 6);
+            let accum = ctx.builder.ins().bor_imm(accum, conversions::CHAR_TAG);
+            Ok(accum)
+        })?);
+    }
 
-    res.push(emit_primitive("char->integer", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(1, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-        let accum = args[1];
+    if higher_order_primitives.contains("char->integer") {
+        res.push(emit_primitive("char->integer", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+            let accum = args[1];
 
-        fatal::emit_check_char(accum, ctx)?;
+            fatal::emit_check_char(accum, ctx)?;
 
-        let accum = ctx.builder.ins().ushr_imm(accum, 6);
-        Ok(accum)
-    })?);
+            let accum = ctx.builder.ins().ushr_imm(accum, 6);
+            Ok(accum)
+        })?);
+    }
 
-    res.push(emit_primitive("null?", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(1, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-        let accum = args[1];
+    if higher_order_primitives.contains("null?") {
+        res.push(emit_primitive("null?", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+            let accum = args[1];
 
-        let accum = ctx
-            .builder
-            .ins()
-            .icmp_imm(IntCC::Equal, accum, conversions::NIL_VALUE);
-        // The result of this comparason is a boolean value so we
-        // need to convert it back to a ctx.word before working on it.
-        let accum = ctx.builder.ins().bint(word, accum);
-        Ok(emit_word_to_bool(accum, &mut ctx.builder))
-    })?);
+            let accum = ctx
+                .builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::NIL_VALUE);
+            // The result of this comparason is a boolean value so we
+            // need to convert it back to a ctx.word before working on it.
+            let accum = ctx.builder.ins().bint(word, accum);
+            Ok(emit_word_to_bool(accum, &mut ctx.builder))
+        })?);
+    }
 
-    res.push(emit_primitive("zero?", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(1, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-        let accum = args[1];
+    if higher_order_primitives.contains("zero?") {
+        res.push(emit_primitive("zero?", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+            let accum = args[1];
 
-        let accum =
+            let accum =
+                ctx.builder
+                    .ins()
+                    .icmp_imm(IntCC::Equal, accum, Expr::Integer(0).immediate_rep());
+            let accum = ctx.builder.ins().bint(word, accum);
+            Ok(emit_word_to_bool(accum, &mut ctx.builder))
+        })?);
+    }
+
+    if higher_order_primitives.contains("not") {
+        res.push(emit_primitive("not", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+            let accum = args[1];
+
+            fatal::emit_check_bool(accum, ctx)?;
+
+            // To get the not of a boolean, subtract one from it and
+            // then take the absolute value.
+            let accum = ctx.builder.ins().sshr_imm(accum, conversions::BOOL_SHIFT);
+            let accum = ctx.builder.ins().iadd_imm(accum, -1);
+            // FIXME: there is some serious black magic surrounding
+            // why we don't need to take the absolute value
+            // here. Taking the absolute value causes a compilation
+            // error when cranelift is verifying things.
+            // let accum = builder.ins().iabs(accum);
+            Ok(emit_word_to_bool(accum, &mut ctx.builder))
+        })?);
+    }
+
+    if higher_order_primitives.contains("integer?") {
+        res.push(emit_primitive("integer?", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+            let accum = args[1];
+
+            let accum = ctx.builder.ins().band_imm(accum, conversions::FIXNUM_MASK);
+            let accum = ctx
+                .builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::FIXNUM_TAG);
+            let accum = ctx.builder.ins().bint(word, accum);
+            Ok(emit_word_to_bool(accum, &mut ctx.builder))
+        })?);
+    }
+
+    if higher_order_primitives.contains("boolean?") {
+        res.push(emit_primitive("boolean?", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+            let accum = args[1];
+
+            let accum = ctx.builder.ins().band_imm(accum, conversions::BOOL_MASK);
+            let accum = ctx
+                .builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::BOOL_TAG);
+            let accum = ctx.builder.ins().bint(word, accum);
+            Ok(emit_word_to_bool(accum, &mut ctx.builder))
+        })?);
+    }
+
+    if higher_order_primitives.contains("pair?") {
+        res.push(emit_primitive("pair?", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+            let accum = args[1];
+
+            let accum = ctx
+                .builder
+                .ins()
+                .band_imm(accum, conversions::HEAP_TAG_MASK);
+            let accum = ctx
+                .builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::PAIR_TAG);
+            let accum = ctx.builder.ins().bint(word, accum);
+            Ok(emit_word_to_bool(accum, &mut ctx.builder))
+        })?);
+    }
+
+    if higher_order_primitives.contains("closure?") {
+        res.push(emit_primitive("closure?", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+            let accum = args[1];
+
+            let accum = ctx
+                .builder
+                .ins()
+                .band_imm(accum, conversions::HEAP_TAG_MASK);
+            let accum = ctx
+                .builder
+                .ins()
+                .icmp_imm(IntCC::Equal, accum, conversions::CLOSURE_TAG);
+            let accum = ctx.builder.ins().bint(word, accum);
+            Ok(emit_word_to_bool(accum, &mut ctx.builder))
+        })?);
+    }
+
+    if higher_order_primitives.contains("add") {
+        res.push(emit_primitive("add", 2, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+            let left = args[1];
+            let right = args[2];
+
+            fatal::emit_check_int(left, ctx)?;
+            fatal::emit_check_int(right, ctx)?;
+
+            Ok(ctx.builder.ins().iadd(left, right))
+        })?);
+    }
+
+    if higher_order_primitives.contains("sub") {
+        res.push(emit_primitive("sub", 2, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+
+            let left = args[1];
+            let right = args[2];
+
+            fatal::emit_check_int(left, ctx)?;
+            fatal::emit_check_int(right, ctx)?;
+
+            let right = ctx.builder.ins().ineg(right);
+
+            Ok(ctx.builder.ins().iadd(left, right))
+        })?);
+    }
+
+    if higher_order_primitives.contains("mul") {
+        res.push(emit_primitive("mul", 2, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+
+            let left = args[1];
+            let right = args[2];
+
+            fatal::emit_check_int(left, ctx)?;
+            fatal::emit_check_int(right, ctx)?;
+
+            let accum = ctx.builder.ins().imul(left, right);
+
+            // At this point we've picked up an extra 2^2 so we need
+            // to right shift it out.
+            //
+            // NOTE: It is possible that it would be more reasonable
+            // to shift things out first. I'm worried here that this
+            // will cause integer overflows where we wouldn't normally
+            // expect them.
+            Ok(ctx.builder.ins().sshr_imm(accum, 2))
+        })?);
+    }
+
+    if higher_order_primitives.contains("eq") {
+        res.push(emit_primitive("eq", 2, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+
+            let left = args[1];
+            let right = args[2];
+
+            let accum = ctx.builder.ins().icmp(IntCC::Equal, left, right);
+            let accum = ctx.builder.ins().bint(word, accum);
+            Ok(emit_word_to_bool(accum, &mut ctx.builder))
+        })?);
+    }
+
+    if higher_order_primitives.contains("lt") {
+        res.push(emit_primitive("lt", 2, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+
+            let left = args[1];
+            let right = args[2];
+
+            fatal::emit_check_int(left, ctx)?;
+            fatal::emit_check_int(right, ctx)?;
+
+            let accum = ctx.builder.ins().icmp(IntCC::SignedLessThan, left, right);
+            let accum = ctx.builder.ins().bint(word, accum);
+            Ok(emit_word_to_bool(accum, &mut ctx.builder))
+        })?);
+    }
+
+    if higher_order_primitives.contains("gt") {
+        res.push(emit_primitive("gt", 2, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+
+            let left = args[1];
+            let right = args[2];
+
+            fatal::emit_check_int(left, ctx)?;
+            fatal::emit_check_int(right, ctx)?;
+
+            let accum = ctx
+                .builder
+                .ins()
+                .icmp(IntCC::SignedGreaterThan, left, right);
+            let accum = ctx.builder.ins().bint(word, accum);
+            Ok(emit_word_to_bool(accum, &mut ctx.builder))
+        })?);
+    }
+
+    if higher_order_primitives.contains("cons") {
+        res.push(emit_primitive("cons", 2, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
+
+            let data = args[1];
+            let next = args[2];
+
+            let storage = emit_alloc((ctx.word.bytes() * 2).into(), ctx)?;
+
+            ctx.builder.ins().store(MemFlags::new(), data, storage, 0);
             ctx.builder
                 .ins()
-                .icmp_imm(IntCC::Equal, accum, Expr::Integer(0).immediate_rep());
-        let accum = ctx.builder.ins().bint(word, accum);
-        Ok(emit_word_to_bool(accum, &mut ctx.builder))
-    })?);
+                .store(MemFlags::new(), next, storage, word.bytes() as i32);
 
-    res.push(emit_primitive("not", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(1, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-        let accum = args[1];
+            Ok(ctx.builder.ins().bor_imm(storage, conversions::PAIR_TAG))
+        })?);
+    }
 
-        fatal::emit_check_bool(accum, ctx)?;
+    if higher_order_primitives.contains("car") {
+        res.push(emit_primitive("car", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
 
-        // To get the not of a boolean, subtract one from it and
-        // then take the absolute value.
-        let accum = ctx.builder.ins().sshr_imm(accum, conversions::BOOL_SHIFT);
-        let accum = ctx.builder.ins().iadd_imm(accum, -1);
-        // FIXME: there is some serious black magic surrounding
-        // why we don't need to take the absolute value
-        // here. Taking the absolute value causes a compilation
-        // error when cranelift is verifying things.
-        // let accum = builder.ins().iabs(accum);
-        Ok(emit_word_to_bool(accum, &mut ctx.builder))
-    })?);
+            let pair = args[1];
 
-    res.push(emit_primitive("integer?", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(1, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-        let accum = args[1];
+            fatal::emit_check_pair(pair, ctx)?;
 
-        let accum = ctx.builder.ins().band_imm(accum, conversions::FIXNUM_MASK);
-        let accum = ctx
-            .builder
-            .ins()
-            .icmp_imm(IntCC::Equal, accum, conversions::FIXNUM_TAG);
-        let accum = ctx.builder.ins().bint(word, accum);
-        Ok(emit_word_to_bool(accum, &mut ctx.builder))
-    })?);
+            let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
 
-    res.push(emit_primitive("boolean?", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(1, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-        let accum = args[1];
+            Ok(ctx.builder.ins().load(word, MemFlags::new(), address, 0))
+        })?);
+    }
 
-        let accum = ctx.builder.ins().band_imm(accum, conversions::BOOL_MASK);
-        let accum = ctx
-            .builder
-            .ins()
-            .icmp_imm(IntCC::Equal, accum, conversions::BOOL_TAG);
-        let accum = ctx.builder.ins().bint(word, accum);
-        Ok(emit_word_to_bool(accum, &mut ctx.builder))
-    })?);
+    if higher_order_primitives.contains("cdr") {
+        res.push(emit_primitive("cdr", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[0], ctx)?;
+            let args = ctx.builder.block_params(block);
 
-    res.push(emit_primitive("pair?", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(1, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-        let accum = args[1];
+            let pair = args[1];
 
-        let accum = ctx
-            .builder
-            .ins()
-            .band_imm(accum, conversions::HEAP_TAG_MASK);
-        let accum = ctx
-            .builder
-            .ins()
-            .icmp_imm(IntCC::Equal, accum, conversions::PAIR_TAG);
-        let accum = ctx.builder.ins().bint(word, accum);
-        Ok(emit_word_to_bool(accum, &mut ctx.builder))
-    })?);
+            fatal::emit_check_pair(pair, ctx)?;
 
-    res.push(emit_primitive("closure?", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(1, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-        let accum = args[1];
+            let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
 
-        let accum = ctx
-            .builder
-            .ins()
-            .band_imm(accum, conversions::HEAP_TAG_MASK);
-        let accum = ctx
-            .builder
-            .ins()
-            .icmp_imm(IntCC::Equal, accum, conversions::CLOSURE_TAG);
-        let accum = ctx.builder.ins().bint(word, accum);
-        Ok(emit_word_to_bool(accum, &mut ctx.builder))
-    })?);
-
-    res.push(emit_primitive("add", 2, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(2, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-        let left = args[1];
-        let right = args[2];
-
-        fatal::emit_check_int(left, ctx)?;
-        fatal::emit_check_int(right, ctx)?;
-
-        Ok(ctx.builder.ins().iadd(left, right))
-    })?);
-
-    res.push(emit_primitive("sub", 2, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(2, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-
-        let left = args[1];
-        let right = args[2];
-
-        fatal::emit_check_int(left, ctx)?;
-        fatal::emit_check_int(right, ctx)?;
-
-        let right = ctx.builder.ins().ineg(right);
-
-        Ok(ctx.builder.ins().iadd(left, right))
-    })?);
-
-    res.push(emit_primitive("mul", 2, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(2, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-
-        let left = args[1];
-        let right = args[2];
-
-        fatal::emit_check_int(left, ctx)?;
-        fatal::emit_check_int(right, ctx)?;
-
-        let accum = ctx.builder.ins().imul(left, right);
-
-        // At this point we've picked up an extra 2^2 so we need
-        // to right shift it out.
-        //
-        // NOTE: It is possible that it would be more reasonable
-        // to shift things out first. I'm worried here that this
-        // will cause integer overflows where we wouldn't normally
-        // expect them.
-        Ok(ctx.builder.ins().sshr_imm(accum, 2))
-    })?);
-
-    res.push(emit_primitive("eq", 2, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(2, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-
-        let left = args[1];
-        let right = args[2];
-
-        let accum = ctx.builder.ins().icmp(IntCC::Equal, left, right);
-        let accum = ctx.builder.ins().bint(word, accum);
-        Ok(emit_word_to_bool(accum, &mut ctx.builder))
-    })?);
-
-    res.push(emit_primitive("lt", 2, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(2, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-
-        let left = args[1];
-        let right = args[2];
-
-        fatal::emit_check_int(left, ctx)?;
-        fatal::emit_check_int(right, ctx)?;
-
-        let accum = ctx.builder.ins().icmp(IntCC::SignedLessThan, left, right);
-        let accum = ctx.builder.ins().bint(word, accum);
-        Ok(emit_word_to_bool(accum, &mut ctx.builder))
-    })?);
-
-    res.push(emit_primitive("gt", 2, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(2, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-
-        let left = args[1];
-        let right = args[2];
-
-        fatal::emit_check_int(left, ctx)?;
-        fatal::emit_check_int(right, ctx)?;
-
-        let accum = ctx
-            .builder
-            .ins()
-            .icmp(IntCC::SignedGreaterThan, left, right);
-        let accum = ctx.builder.ins().bint(word, accum);
-        Ok(emit_word_to_bool(accum, &mut ctx.builder))
-    })?);
-
-    res.push(emit_primitive("cons", 2, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(2, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-
-        let data = args[1];
-        let next = args[2];
-
-        let storage = emit_alloc((ctx.word.bytes() * 2).into(), ctx)?;
-
-        ctx.builder.ins().store(MemFlags::new(), data, storage, 0);
-        ctx.builder
-            .ins()
-            .store(MemFlags::new(), next, storage, word.bytes() as i32);
-
-        Ok(ctx.builder.ins().bor_imm(storage, conversions::PAIR_TAG))
-    })?);
-
-    res.push(emit_primitive("car", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(2, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-
-        let pair = args[1];
-
-        fatal::emit_check_pair(pair, ctx)?;
-
-        let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
-
-        Ok(ctx.builder.ins().load(word, MemFlags::new(), address, 0))
-    })?);
-
-    res.push(emit_primitive("cdr", 1, jit, |ctx| {
-        let block = ctx.builder.current_block().unwrap();
-        let args = ctx.builder.block_params(block);
-        emit_check_arg_count(2, args[0], ctx)?;
-        let args = ctx.builder.block_params(block);
-
-        let pair = args[1];
-
-        fatal::emit_check_pair(pair, ctx)?;
-
-        let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
-
-        Ok(ctx
-            .builder
-            .ins()
-            .load(word, MemFlags::new(), address, word.bytes() as i32))
-    })?);
+            Ok(ctx
+                .builder
+                .ins()
+                .load(word, MemFlags::new(), address, word.bytes() as i32))
+        })?);
+    }
 
     Ok(res)
 }
@@ -1197,6 +1271,30 @@ mod tests {
     fn is_closure() {
         let source = r#"
 (closure? ((fn () (fn (n) n))))
+"#;
+        let res = roundtrip_string(source).unwrap();
+        assert_eq!(Expr::Bool(true), res)
+    }
+
+    #[test]
+    #[should_panic(expected = "builtin function (let) can not be used in a higher order context")]
+    fn bad_builtin_assign() {
+        let source = r#"
+(let set 10)
+(let s set)
+(let l let)
+"#;
+        let res = roundtrip_string(source).unwrap();
+        assert_eq!(Expr::Bool(true), res)
+    }
+
+    #[test]
+    #[should_panic(expected = "builtin function (set) can not be used in a higher order context")]
+    fn bad_builtin_use() {
+        let source = r#"
+(let f (fn (op) (op 1 2)))
+(f cons)
+(f set)
 "#;
         let res = roundtrip_string(source).unwrap();
         assert_eq!(Expr::Bool(true), res)

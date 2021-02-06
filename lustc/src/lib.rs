@@ -14,6 +14,7 @@ pub mod primitives;
 pub mod procedures;
 pub mod reader;
 pub mod renamer;
+pub mod timer;
 pub mod tokenbuffer;
 pub mod tokenizer;
 
@@ -119,6 +120,22 @@ impl Expr {
         Ok(PreorderStatus::Continue)
     }
 
+    pub(crate) fn preorder_traverse_res<F, E>(&self, f: &mut F) -> Result<PreorderStatus, E>
+    where
+        F: FnMut(&Expr) -> Result<PreorderStatus, E>,
+    {
+        let status = f(self)?;
+        if let PreorderStatus::Skip = status {
+            return Ok(status);
+        }
+        if let Expr::List(v) = self {
+            for e in v {
+                e.preorder_traverse_res(f)?;
+            }
+        }
+        Ok(PreorderStatus::Continue)
+    }
+
     pub(crate) fn preorder_traverse<F>(&self, f: &mut F) -> PreorderStatus
     where
         F: FnMut(&Expr) -> PreorderStatus,
@@ -157,20 +174,22 @@ impl Expr {
 pub fn roundtrip_string(input: &str) -> Result<Expr, String> {
     let mut parser = Parser::new(input);
     let mut exprs = Vec::new();
-    while parser.has_more() {
-        let res = parser.parse_expr();
+    {
+        let _t = crate::timer::timeit("parse");
+        while parser.has_more() {
+            let res = parser.parse_expr();
 
-        for e in &res.errors {
-            e.show(input, "anonymous");
-        }
-        if res.errors.is_empty() {
-            let expr = res.expr.unwrap();
-            exprs.push(expr.into_expr()?);
-        } else {
-            return Err("parse error!".to_string());
+            for e in &res.errors {
+                e.show(input, "anonymous");
+            }
+            if res.errors.is_empty() {
+                let expr = res.expr.unwrap();
+                exprs.push(expr.into_expr()?);
+            } else {
+                return Err("parse error!".to_string());
+            }
         }
     }
-
     crate::compiler::roundtrip_program(&mut exprs)
 }
 

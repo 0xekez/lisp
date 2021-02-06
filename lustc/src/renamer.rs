@@ -162,6 +162,7 @@ fn make_expr_names_unique(
 }
 
 pub fn make_names_unique(program: &mut [Expr]) -> Result<(), String> {
+    let _t = crate::timer::timeit("symbol renaming pass");
     let mut count = 0;
     let mut env = HashMap::new();
 

@@ -244,6 +244,7 @@ pub struct LustFn {
 /// Collects all of the anonymous functions in a program and returns a
 /// list of them.
 pub(crate) fn collect_functions(program: &[Expr]) -> Vec<LustFn> {
+    let _t = crate::timer::timeit("function collection pass");
     let mut res = Vec::new();
 
     for e in program {
@@ -271,6 +272,7 @@ pub(crate) fn build_fn_map(functions: Vec<LustFn>) -> HashMap<String, LustFn> {
 /// the list of functions because it needs to be sure to replace their
 /// collected bodies with versions with the replaced functions inside.
 pub(crate) fn replace_functions(program: &mut [Expr], functions: &mut [LustFn]) {
+    let _t = crate::timer::timeit("function replacement pass");
     let mut count = 0;
     for e in program {
         // It is very important that this is a depth first traversal
@@ -356,6 +358,7 @@ fn analyze_variables(e: &Expr) -> (HashSet<&String>, HashSet<&String>) {
 /// current scope. A symbol is a function's arguments is bound for the
 /// remainder of the current scope.
 pub(crate) fn annotate_free_variables(f: &mut LustFn) {
+    let _t = crate::timer::timeit("free variable analysis");
     let mut bound: HashSet<&String> = f.params.iter().collect();
     let mut free = HashSet::<&String>::new();
 

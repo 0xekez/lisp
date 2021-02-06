@@ -13,6 +13,7 @@ use crate::compiler::JIT;
 
 // Emits an 'alloc' function which when called makes a call to malloc.
 pub fn define_alloc(jit: &mut JIT) -> Result<(), String> {
+    let _t = crate::timer::timeit("emit alloc");
     let word = jit.module.target_config().pointer_type();
 
     // Take a size in bytes to allocate
