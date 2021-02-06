@@ -20,6 +20,32 @@ need to be like this. With modern JITs and some care we can have a
 You can find documentation about Lust
 [here](https://zmedley.com/lust).
 
+## Performance Example
+
+Consider everyone's favorite fib function in Lust and in Python:
+
+```lisp
+(let fib (fn (n)
+	     (if (lt n 2)
+		 n
+	       (add (fib (sub n 2)) (fib (sub n 1))))))
+```
+```python
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n-1) + fib(n-2)
+```
+
+The Lust compiler can compute `(fib 40)` in 2.3 seconds. It takes
+Python 35 seconds.
+
+Take this with a grain of salt because there are many things Python
+can do very elegantly that are still awkward in Lust and I'm sure
+there are places where python's C bindings give it a leg up. The point
+is that in this case both languages are very similar looking but one
+is much, much quicker.
+
 ## Project Status
 
 Lust has both an interpreter and compiler which live in the `lust` and
