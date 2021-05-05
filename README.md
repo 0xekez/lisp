@@ -46,6 +46,9 @@ there are places where python's C bindings give it a leg up. The point
 is that in this case both languages are very similar looking but one
 is much, much quicker.
 
+The compiler also doesn't have a garbage collector yet but who really
+needs one if you can run everything faster than a gc cycle ;)
+
 ## Project Status
 
 Lust has both an interpreter and compiler which live in the `lust` and
@@ -85,7 +88,9 @@ export LUSTPATH="<path to lust repo>/std/"
 You're best bet for using Lust is probably to take a look at some of
 the example programs
 [here](https://github.com/ZekeMedley/lust/tree/master/lust/lust-programs)
-and then firing up the REPL with `cargo run`.
+and then firing up the REPL with `cargo run`. There is also a number of
+examples for the compiler
+[here](https://github.com/ZekeMedley/lust/tree/main/lustc/examples).
 
 Even without the compiler Lust programs should be reasonably quick. If
 you find yourself needing some more speed consider using a release
