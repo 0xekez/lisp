@@ -27,6 +27,7 @@ use cranelift::prelude::*;
 use cranelift_module::DataContext;
 use cranelift_module::{Linkage, Module};
 use cranelift_simplejit::{SimpleJITBuilder, SimpleJITModule};
+use primitives::define_contiguous_to_list;
 use primitives::string_is_primitive;
 use procedures::emit_procedure;
 use procedures::LustFn;
@@ -73,6 +74,7 @@ impl Default for JIT {
             data_ctx: DataContext::new(),
         };
         define_alloc(&mut jit).unwrap();
+        define_contiguous_to_list(&mut jit).unwrap();
         crate::fatal::emit_error_strings(&mut jit).unwrap();
         jit
     }
@@ -165,7 +167,7 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     // to the top of the program and replaced with their anyonmous
     // names. There is some cool manuvering here that happens to make
     // sure that the bodies of the collected functions are updated.
-    let mut functions = procedures::collect_functions(program);
+    let mut functions = procedures::collect_functions(program)?;
     // Annotation needs to happen before replacement so that we can
     // traverse the body of nested functions for free variables that
     // outer functions need to caputre.
@@ -188,7 +190,14 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
         let _t = crate::timer::timeit("procedure compilation");
         // Emit all the non-primitive functions into the JIT.
         for (_, f) in fnmap.iter().filter(|(name, _)| !string_is_primitive(name)) {
-            emit_procedure(&mut jit, &f.name, &f.params, &f.body, &fnmap)?;
+            emit_procedure(
+                &mut jit,
+                &f.name,
+                &f.params,
+                &f.body,
+                &f.varadic_symbol,
+                &fnmap,
+            )?;
         }
     }
 

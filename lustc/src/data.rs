@@ -151,9 +151,9 @@ pub(crate) fn create_data(data: LustData, jit: &mut JIT) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parse_string;
     use crate::roundtrip_file;
     use crate::roundtrip_string;
-    use crate::Parser;
 
     #[test]
     fn test_data_collection() {
@@ -162,18 +162,7 @@ mod tests {
 
 (if 1 (quote (1 2)) (quote (2 3)))
 "#;
-        let mut parser = Parser::new(source);
-        let mut exprs = Vec::new();
-        while parser.has_more() {
-            let res = parser.parse_expr();
-
-            if res.errors.is_empty() {
-                let expr = res.expr.unwrap();
-                exprs.push(expr.into_expr().unwrap());
-            } else {
-                panic!("parse error!".to_string());
-            }
-        }
+        let exprs = parse_string(source).unwrap();
 
         let data = collect_data(&exprs);
 

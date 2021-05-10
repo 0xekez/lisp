@@ -90,6 +90,18 @@ impl Expr {
         }
     }
 
+    pub(crate) fn postorder_traverse_res<F, E>(&self, f: &mut F) -> Result<(), E>
+    where
+        F: FnMut(&Expr) -> Result<(), E>,
+    {
+        if let Expr::List(v) = self {
+            for e in v {
+                e.postorder_traverse_res(f)?;
+            }
+        }
+        f(self)
+    }
+
     /// Performs a postorder traversal of the expr calling F on each
     /// item it encounters. F may mutate the underlying expr.
     pub(crate) fn postorder_traverse_mut<F>(&mut self, f: &mut F)
@@ -169,9 +181,8 @@ impl Expr {
     }
 }
 
-/// Roundtrips a string by spinning up a JIT and executing it. Returns
-/// the result.
-pub fn roundtrip_string(input: &str) -> Result<Expr, String> {
+/// Parses a string into a list of expressions.
+pub fn parse_string(input: &str) -> Result<Vec<Expr>, String> {
     let mut parser = Parser::new(input);
     let mut exprs = Vec::new();
     {
@@ -190,6 +201,13 @@ pub fn roundtrip_string(input: &str) -> Result<Expr, String> {
             }
         }
     }
+    Ok(exprs)
+}
+
+/// Roundtrips a string by spinning up a JIT and executing it. Returns
+/// the result.
+pub fn roundtrip_string(input: &str) -> Result<Expr, String> {
+    let mut exprs = parse_string(input)?;
     crate::compiler::roundtrip_program(&mut exprs)
 }
 

@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use crate::compiler::{emit_expr, JIT};
 use crate::heap::emit_alloc;
 use crate::locals::emit_var_decl_and_assign;
+use crate::primitives::emit_contigous_to_list;
 use crate::primitives::string_is_builtin;
 use crate::Expr;
 use crate::{compiler::Context, fatal::emit_check_callable};
@@ -73,21 +74,18 @@ pub fn emit_procedure(
     name: &str,
     params: &[String],
     body: &[Expr],
+    varadic_symbol: &Option<String>,
     fnmap: &HashMap<String, LustFn>,
 ) -> Result<(), String> {
     let word = jit.module.target_config().pointer_type();
 
+    // Closure param
+    jit.context.func.signature.params.push(AbiParam::new(word));
+
     // Argument count param.
     jit.context.func.signature.params.push(AbiParam::new(word));
 
-    // Indicate that the function takes some number of words as
-    // arguments. This says nothing yet of the names of those
-    // paramaters.
-    for _ in params {
-        jit.context.func.signature.params.push(AbiParam::new(word));
-    }
-
-    // Closure argument
+    // Location of arguments on heap
     jit.context.func.signature.params.push(AbiParam::new(word));
 
     // All lust functions return the result of evaluating their last
@@ -101,7 +99,6 @@ pub fn emit_procedure(
     builder.switch_to_block(entry_block);
     builder.seal_block(entry_block);
 
-    // FIXME: ugly clone here.
     let mut ctx = Context::new(
         builder,
         &mut jit.module,
@@ -111,11 +108,27 @@ pub fn emit_procedure(
         Vec::new(),
     );
 
-    let arg_count = ctx.builder.block_params(entry_block)[0];
-    crate::fatal::emit_check_arg_count(params.len(), arg_count, &mut ctx)?;
+    let closure_ptr = ctx.builder.block_params(entry_block)[0];
+    let arg_count = ctx.builder.block_params(entry_block)[1];
 
+    crate::fatal::emit_check_arg_count(
+        params.len(),
+        arg_count,
+        &mut ctx,
+        varadic_symbol.is_some(),
+    )?;
+
+    let argloc = ctx.builder.block_params(entry_block)[2];
+
+    // Assign regular arguments
     for (i, p) in params.iter().enumerate() {
-        let val = ctx.builder.block_params(entry_block)[i + 1];
+        let val = ctx.builder.ins().load(
+            word,
+            MemFlags::new(),
+            argloc,
+            (i * word.bytes() as usize) as i32,
+        );
+
         // Params that are escaped need to be initialized
         // appropriately.
         let val = if p.starts_with("e_") {
@@ -128,7 +141,21 @@ pub fn emit_procedure(
         emit_var_decl_and_assign(p, val, &mut ctx)?;
     }
 
-    let closure_ptr = ctx.builder.block_params(entry_block)[params.len() + 1];
+    // Assign varadic argument
+    if let Some(sym) = varadic_symbol {
+        let varadic_len = ctx
+            .builder
+            .ins()
+            .iadd_imm(arg_count, -(params.len() as i64));
+        let varadic_ptr = ctx
+            .builder
+            .ins()
+            .iadd_imm(argloc, (params.len() * word.bytes() as usize) as i64);
+        let varadic_val = emit_contigous_to_list(&mut ctx, varadic_ptr, varadic_len)?;
+        emit_var_decl_and_assign(sym, varadic_val, &mut ctx)?;
+    }
+
+    // Assign free variables from closure
     let free_vars = fnmap
         .get(name)
         .map(|f| &f.free_variables)
@@ -188,25 +215,20 @@ pub(crate) fn emit_fncall(head: &Expr, args: &[Expr], ctx: &mut Context) -> Resu
 
     let mut sig = ctx.module.make_signature();
 
+    // Argument which is a pointer to the closure
+    sig.params.push(AbiParam::new(word));
+
     // Argument that is the number of args being passed in. Used for
     // validating the number of arguments and varadic functions.
     sig.params.push(AbiParam::new(word));
 
-    for _ in args {
-        sig.params.push(AbiParam::new(word));
-    }
-    // Also push an argument which is the closure.
+    // A pointer to where the arguments are stored on the heap.
     sig.params.push(AbiParam::new(word));
 
+    // We always return a single word
     sig.returns.push(AbiParam::new(word));
 
-    // First argument is the number of arguments we're going to pass in.
-    let mut argsc = vec![ctx.builder.ins().iconst(word, args.len() as i64)];
-
-    for arg in args {
-        argsc.push(emit_expr(arg, ctx)?)
-    }
-
+    // First argumnet is a pointer to the closure
     let closure_ptr = ctx
         .builder
         .ins()
@@ -217,7 +239,23 @@ pub(crate) fn emit_fncall(head: &Expr, args: &[Expr], ctx: &mut Context) -> Resu
         .ins()
         .load(ctx.word, MemFlags::new(), closure_ptr, 0);
 
-    argsc.push(closure_ptr);
+    let mut argsc = vec![closure_ptr];
+
+    // Second argument is the number of arguments we're going to pass in.
+    argsc.push(ctx.builder.ins().iconst(word, args.len() as i64));
+
+    // Allocate space for arguments and stash them away.
+    let argloc = emit_alloc((args.len() * word.bytes() as usize) as i64, ctx)?;
+    for (i, arg) in args.iter().enumerate() {
+        let val = emit_expr(arg, ctx)?;
+        ctx.builder.ins().store(
+            MemFlags::new(),
+            val,
+            argloc,
+            (i * word.bytes() as usize) as i32,
+        );
+    }
+    argsc.push(argloc);
 
     let sig_ref = ctx.builder.import_signature(sig);
 
@@ -239,28 +277,65 @@ pub struct LustFn {
     pub body: Vec<Expr>,
     /// Variables that need to be captured in this function's closure.
     pub free_variables: Vec<String>,
+    /// The symbol varadic arguments should be bound to if any.
+    pub varadic_symbol: Option<String>,
+}
+
+fn is_varadic_param(p: &str) -> bool {
+    p.len() == 3 && p.chars().last() == Some('&')
+}
+
+fn is_varadic_signature(sig: &[&String]) -> bool {
+    sig.iter().any(|p| is_varadic_param(p))
+}
+
+fn get_and_validate_varadic(sig: &[&String]) -> Result<String, String> {
+    if sig.len() < 2 {
+        return Err("a varadic signature (one with the & symbol) must have at least one additional symbol to bind the varadic arguments to.".to_string());
+    }
+    if !is_varadic_param(sig[sig.len() - 2]) {
+        return Err("varadic symbol (&) in non tail position".to_string());
+    }
+    Ok(sig[sig.len() - 1].clone())
 }
 
 /// Collects all of the anonymous functions in a program and returns a
 /// list of them.
-pub(crate) fn collect_functions(program: &[Expr]) -> Vec<LustFn> {
+pub(crate) fn collect_functions(program: &[Expr]) -> Result<Vec<LustFn>, String> {
     let _t = crate::timer::timeit("function collection pass");
     let mut res = Vec::new();
 
     for e in program {
-        e.postorder_traverse(&mut |e: &Expr| {
+        e.postorder_traverse_res::<_, String>(&mut |e: &Expr| {
             if let Some((params, body)) = e.is_fndef() {
+                let (varadic_symbol, params) = if is_varadic_signature(&params) {
+                    (Some(get_and_validate_varadic(&params)?), {
+                        let mut params: Vec<_> = params
+                            .iter()
+                            .filter(|p| !is_varadic_param(p))
+                            .map(|p| *p)
+                            .collect();
+                        params.pop();
+                        params
+                    })
+                } else {
+                    (None, params)
+                };
+
+                let params = params.iter().map(|&s| s.clone()).collect();
                 res.push(LustFn {
                     name: format!("__anon_fn_{}", res.len()),
-                    params: params.iter().map(|&s| s.clone()).collect(),
+                    params: params,
                     body: body.iter().map(|e| e.clone()).collect(),
                     free_variables: vec![],
-                })
+                    varadic_symbol,
+                });
             }
-        })
+            Ok(())
+        })?;
     }
 
-    res
+    Ok(res)
 }
 
 pub(crate) fn build_fn_map(functions: Vec<LustFn>) -> HashMap<String, LustFn> {
@@ -360,6 +435,9 @@ fn analyze_variables(e: &Expr) -> (HashSet<&String>, HashSet<&String>) {
 pub(crate) fn annotate_free_variables(f: &mut LustFn) {
     let _t = crate::timer::timeit("free variable analysis");
     let mut bound: HashSet<&String> = f.params.iter().collect();
+    if let Some(s) = &f.varadic_symbol {
+        bound.insert(s);
+    }
     let mut free = HashSet::<&String>::new();
 
     for e in &f.body {
@@ -452,16 +530,14 @@ pub(crate) fn emit_make_closure(
 }
 
 pub(crate) fn emit_get_fn_addr(name: &str, ctx: &mut Context) -> Result<Value, String> {
-    let argcount = ctx
-        .fnmap
-        .get(name)
-        // Two additional paramters the closure pointer and the arg count pointer.
-        .map(|f| f.params.len() + 2)
-        .ok_or(format!("internal error finding arg count for {}", name))?;
     let mut sig = ctx.module.make_signature();
-    for _ in 0..argcount {
-        sig.params.push(AbiParam::new(ctx.word));
-    }
+    // Clojure
+    sig.params.push(AbiParam::new(ctx.word));
+    // Argument count
+    sig.params.push(AbiParam::new(ctx.word));
+    // Heap location of arguments
+    sig.params.push(AbiParam::new(ctx.word));
+
     sig.returns.push(AbiParam::new(ctx.word));
 
     let callee = ctx
@@ -478,8 +554,7 @@ pub(crate) fn emit_get_fn_addr(name: &str, ctx: &mut Context) -> Result<Value, S
 
 #[cfg(test)]
 mod tests {
-    use crate::errors::Printable;
-    use crate::parser::Parser;
+    use crate::parse_string;
     use crate::roundtrip_file;
     use crate::roundtrip_string;
 
@@ -498,23 +573,9 @@ mod tests {
             (if (bar dog) cat dog)))
 
 "#;
-        let mut parser = Parser::new(source);
-        let mut exprs = Vec::new();
-        while parser.has_more() {
-            let res = parser.parse_expr();
+        let mut exprs = parse_string(source).unwrap();
 
-            for e in &res.errors {
-                e.show(source, "anonymous");
-            }
-            if res.errors.is_empty() {
-                let expr = res.expr.unwrap();
-                exprs.push(expr.into_expr().unwrap());
-            } else {
-                panic!("parse error!".to_string());
-            }
-        }
-
-        let mut functions = collect_functions(&exprs);
+        let mut functions = collect_functions(&exprs).unwrap();
         for mut f in &mut functions {
             annotate_free_variables(&mut f)
         }
@@ -546,28 +607,14 @@ mod tests {
 
 (if (fn (a) (fn (b) (add a b))) (fn (c) 1) (fn (d) 2))
 "#;
-        let mut parser = Parser::new(source);
-        let mut exprs = Vec::new();
-        while parser.has_more() {
-            let res = parser.parse_expr();
+        let mut exprs = parse_string(source).unwrap();
 
-            for e in &res.errors {
-                e.show(source, "anonymous");
-            }
-            if res.errors.is_empty() {
-                let expr = res.expr.unwrap();
-                exprs.push(expr.into_expr().unwrap());
-            } else {
-                panic!("parse error!".to_string());
-            }
-        }
-
-        let mut functions = collect_functions(&exprs);
+        let mut functions = collect_functions(&exprs).unwrap();
         assert_eq!(functions.len(), 6);
 
         replace_functions(&mut exprs, &mut functions);
 
-        let functions = collect_functions(&exprs);
+        let functions = collect_functions(&exprs).unwrap();
         assert_eq!(functions.len(), 0);
     }
 
@@ -580,23 +627,9 @@ mod tests {
 
 (if (fn (a) (fn (b) (add a b))) (fn (c) 1) (fn (d) 2))
 "#;
-        let mut parser = Parser::new(source);
-        let mut exprs = Vec::new();
-        while parser.has_more() {
-            let res = parser.parse_expr();
+        let exprs = parse_string(source).unwrap();
 
-            for e in &res.errors {
-                e.show(source, "anonymous");
-            }
-            if res.errors.is_empty() {
-                let expr = res.expr.unwrap();
-                exprs.push(expr.into_expr().unwrap());
-            } else {
-                panic!("parse error!".to_string());
-            }
-        }
-
-        let functions = collect_functions(&exprs);
+        let functions = collect_functions(&exprs).unwrap();
 
         assert_eq!(functions.len(), 6)
     }
@@ -685,5 +718,66 @@ mod tests {
     fn memoized_fib() {
         let res = roundtrip_file("examples/memoized_fib.lisp").unwrap();
         assert_eq!(res, Expr::Integer(102334155))
+    }
+
+    #[test]
+    fn do_impl() {
+        let res = roundtrip_file("examples/do.lisp").unwrap();
+        assert_eq!(res, Expr::Integer(11))
+    }
+
+    #[test]
+    fn list_impl() {
+        let res = roundtrip_file("examples/list.lisp").unwrap();
+        assert_eq!(
+            res,
+            Expr::List(vec![
+                Expr::Integer(1),
+                Expr::List(vec![
+                    Expr::Integer(2),
+                    Expr::List(vec![
+                        Expr::Integer(3),
+                        Expr::List(vec![
+                            Expr::List(vec![Expr::Integer(1), Expr::Integer(2)]),
+                            Expr::Nil
+                        ])
+                    ])
+                ])
+            ])
+        )
+    }
+
+    #[test]
+    fn varadic_collection() {
+        // Hack here where we prefix the varadic symbol with two
+        // characters so that functions that expect processed input
+        // handle it correcty.
+        let source = r#"
+(let half 5)
+(let foo (fn (n aa& m)
+             (let half (sub n half))
+             (mul half 2)))
+(foo 26)
+"#;
+        let exprs = parse_string(source).unwrap();
+        let functions = collect_functions(&exprs).unwrap();
+        let function = functions.first().unwrap();
+        assert_eq!(Some("m".to_string()), function.varadic_symbol);
+        assert_eq!(1, function.params.len())
+    }
+
+    #[test]
+    fn arg_counts() {
+        let source = r#"
+    (let reg (fn (a b) (add a b)))
+    (let v   (fn (a & c) c))
+    (reg 1 2)
+    (v 2 3 4)
+    (v 1)
+    (let res (v 1 2 3 4))
+    (car (cdr (cdr res)))
+    "#;
+        let res = roundtrip_string(source).unwrap();
+        assert_eq!(Expr::Integer(4), res)
     }
 }
