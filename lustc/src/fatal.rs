@@ -160,11 +160,19 @@ pub(crate) fn emit_check_arg_count(
     expected: usize,
     actual: Value,
     ctx: &mut Context,
+    is_varadic: bool,
 ) -> Result<(), String> {
-    let cond = ctx
-        .builder
-        .ins()
-        .icmp_imm(IntCC::Equal, actual, expected as i64);
+    // If the function is varadic wrong number of arguments only if
+    // there are less than the number of regular params.
+    let cond = if is_varadic {
+        ctx.builder
+            .ins()
+            .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, actual, expected as i64)
+    } else {
+        ctx.builder
+            .ins()
+            .icmp_imm(IntCC::Equal, actual, expected as i64)
+    };
 
     let error_block = ctx.builder.create_block();
     let ok_block = ctx.builder.create_block();

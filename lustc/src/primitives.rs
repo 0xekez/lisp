@@ -43,13 +43,11 @@ where
 {
     let word = jit.module.target_config().pointer_type();
 
-    // Arguments
-    for _ in 0..arity {
-        jit.context.func.signature.params.push(AbiParam::new(word));
-    }
     // Additional closure argument
     jit.context.func.signature.params.push(AbiParam::new(word));
     // Additional arg count argument
+    jit.context.func.signature.params.push(AbiParam::new(word));
+    // A pointer to where arguments are stored on the heap
     jit.context.func.signature.params.push(AbiParam::new(word));
 
     // Return value
@@ -99,6 +97,7 @@ where
         params: (0..arity).map(|n| n.to_string()).collect(),
         body: vec![],
         free_variables: vec![],
+        varadic_symbol: None,
     })
 }
 
@@ -131,6 +130,23 @@ pub(crate) fn collect_higher_order_primitives(program: &[Expr]) -> Result<HashSe
     Ok(res)
 }
 
+/// Collects the arguments for a function with ARITY number of
+/// arguments.
+fn get_primitive_args(ctx: &mut Context, block: Block, arity: usize) -> Vec<Value> {
+    let args = ctx.builder.block_params(block);
+    let argloc = args[2];
+    (0..arity)
+        .map(|i| {
+            ctx.builder.ins().load(
+                ctx.word,
+                MemFlags::new(),
+                argloc,
+                (i * ctx.word.bytes() as usize) as i32,
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn emit_primitives(
     jit: &mut JIT,
     higher_order_primitives: HashSet<String>,
@@ -145,11 +161,11 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("add1", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(1, args[0], ctx)?;
+            emit_check_arg_count(1, args[1], ctx, false)?;
             // Need to reassign args because we mutably borrowed context
             // above.
-            let args = ctx.builder.block_params(block);
-            let accum = args[1];
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
 
             fatal::emit_check_int(accum, ctx)?;
 
@@ -164,9 +180,9 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("integer->char", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(1, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
-            let accum = args[1];
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
 
             fatal::emit_check_int(accum, ctx)?;
 
@@ -180,9 +196,9 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("char->integer", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(1, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
-            let accum = args[1];
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
 
             fatal::emit_check_char(accum, ctx)?;
 
@@ -195,9 +211,9 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("null?", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(1, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
-            let accum = args[1];
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
 
             let accum = ctx
                 .builder
@@ -214,9 +230,9 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("zero?", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(1, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
-            let accum = args[1];
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
 
             let accum =
                 ctx.builder
@@ -231,9 +247,9 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("not", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(1, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
-            let accum = args[1];
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
 
             fatal::emit_check_bool(accum, ctx)?;
 
@@ -254,9 +270,9 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("integer?", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(1, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
-            let accum = args[1];
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
 
             let accum = ctx.builder.ins().band_imm(accum, conversions::FIXNUM_MASK);
             let accum = ctx
@@ -272,9 +288,9 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("boolean?", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(1, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
-            let accum = args[1];
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
 
             let accum = ctx.builder.ins().band_imm(accum, conversions::BOOL_MASK);
             let accum = ctx
@@ -290,9 +306,9 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("pair?", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(1, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
-            let accum = args[1];
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
 
             let accum = ctx
                 .builder
@@ -311,9 +327,9 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("closure?", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(1, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
-            let accum = args[1];
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
 
             let accum = ctx
                 .builder
@@ -332,10 +348,11 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("add", 2, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(2, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
-            let left = args[1];
-            let right = args[2];
+            emit_check_arg_count(2, args[1], ctx, false)?;
+
+            let args = get_primitive_args(ctx, block, 2);
+            let left = args[0];
+            let right = args[1];
 
             fatal::emit_check_int(left, ctx)?;
             fatal::emit_check_int(right, ctx)?;
@@ -348,11 +365,11 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("sub", 2, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(2, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[1], ctx, false)?;
 
-            let left = args[1];
-            let right = args[2];
+            let args = get_primitive_args(ctx, block, 2);
+            let left = args[0];
+            let right = args[1];
 
             fatal::emit_check_int(left, ctx)?;
             fatal::emit_check_int(right, ctx)?;
@@ -367,11 +384,11 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("mul", 2, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(2, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[1], ctx, false)?;
 
-            let left = args[1];
-            let right = args[2];
+            let args = get_primitive_args(ctx, block, 2);
+            let left = args[0];
+            let right = args[1];
 
             fatal::emit_check_int(left, ctx)?;
             fatal::emit_check_int(right, ctx)?;
@@ -393,11 +410,11 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("eq", 2, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(2, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[1], ctx, false)?;
 
-            let left = args[1];
-            let right = args[2];
+            let args = get_primitive_args(ctx, block, 2);
+            let left = args[0];
+            let right = args[1];
 
             let accum = ctx.builder.ins().icmp(IntCC::Equal, left, right);
             let accum = ctx.builder.ins().bint(word, accum);
@@ -409,11 +426,11 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("lt", 2, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(2, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[1], ctx, false)?;
 
-            let left = args[1];
-            let right = args[2];
+            let args = get_primitive_args(ctx, block, 2);
+            let left = args[0];
+            let right = args[1];
 
             fatal::emit_check_int(left, ctx)?;
             fatal::emit_check_int(right, ctx)?;
@@ -428,11 +445,11 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("gt", 2, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(2, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[1], ctx, false)?;
 
-            let left = args[1];
-            let right = args[2];
+            let args = get_primitive_args(ctx, block, 2);
+            let left = args[0];
+            let right = args[1];
 
             fatal::emit_check_int(left, ctx)?;
             fatal::emit_check_int(right, ctx)?;
@@ -450,11 +467,11 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("cons", 2, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(2, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[1], ctx, false)?;
 
-            let data = args[1];
-            let next = args[2];
+            let args = get_primitive_args(ctx, block, 2);
+            let data = args[0];
+            let next = args[1];
 
             let storage = emit_alloc((ctx.word.bytes() * 2).into(), ctx)?;
 
@@ -471,10 +488,10 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("car", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(2, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[1], ctx, false)?;
 
-            let pair = args[1];
+            let args = get_primitive_args(ctx, block, 1);
+            let pair = args[0];
 
             fatal::emit_check_pair(pair, ctx)?;
 
@@ -488,10 +505,10 @@ pub(crate) fn emit_primitives(
         res.push(emit_primitive("cdr", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
             let args = ctx.builder.block_params(block);
-            emit_check_arg_count(2, args[0], ctx)?;
-            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(2, args[1], ctx, false)?;
 
-            let pair = args[1];
+            let args = get_primitive_args(ctx, block, 1);
+            let pair = args[0];
 
             fatal::emit_check_pair(pair, ctx)?;
 
@@ -826,6 +843,152 @@ fn check_arg_len(name: &str, args: &[Expr], expected: usize) -> Result<(), Strin
     } else {
         Ok(())
     }
+}
+
+pub(crate) fn emit_contigous_to_list(
+    ctx: &mut crate::compiler::Context,
+    ptr: Value,
+    len: Value,
+) -> Result<Value, String> {
+    let word = ctx.module.target_config().pointer_type();
+
+    let mut sig = ctx.module.make_signature();
+
+    sig.params.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(word));
+
+    sig.returns.push(AbiParam::new(word));
+
+    let callee = ctx
+        .module
+        .declare_function(
+            "contiguous-to-list",
+            cranelift_module::Linkage::Import,
+            &sig,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let local_callee = ctx
+        .module
+        .declare_func_in_func(callee, &mut ctx.builder.func);
+
+    let args = vec![ptr, len];
+
+    let call = ctx.builder.ins().call(local_callee, &args);
+    let res = ctx.builder.inst_results(call)[0];
+
+    Ok(res)
+}
+
+// Defined the function contiguous-to-list which converts a contiguous
+// vec of values into a list.
+pub(crate) fn define_contiguous_to_list(jit: &mut JIT) -> Result<(), String> {
+    let word = jit.module.target_config().pointer_type();
+
+    // A pointer to the beginning of the contiguous memory
+    jit.context.func.signature.params.push(AbiParam::new(word));
+    // The length of the contiguous memory.
+    jit.context.func.signature.params.push(AbiParam::new(word));
+    // A pointer to the new list
+    jit.context.func.signature.returns.push(AbiParam::new(word));
+
+    let mut builder = FunctionBuilder::new(&mut jit.context.func, &mut jit.builder_context);
+    let entry_block = builder.create_block();
+
+    builder.append_block_params_for_function_params(entry_block);
+    builder.switch_to_block(entry_block);
+
+    let ptr = builder.block_params(entry_block)[0];
+    let len = builder.block_params(entry_block)[1];
+
+    let cond = builder.ins().icmp_imm(IntCC::Equal, len, 0);
+
+    let done_block = builder.create_block();
+    let more_block = builder.create_block();
+
+    // If there is no length we are done and can return nil.
+    builder.ins().brnz(cond, done_block, &[]);
+    builder.ins().jump(more_block, &[]);
+
+    builder.switch_to_block(done_block);
+    builder.seal_block(done_block);
+
+    let nil = builder.ins().iconst(word, Expr::Nil.immediate_rep());
+    builder.ins().return_(&[nil]);
+
+    builder.switch_to_block(more_block);
+    builder.seal_block(more_block);
+
+    // Make a call to alloc to get some storage
+    let mut sig = jit.module.make_signature();
+    sig.params.push(AbiParam::new(word));
+    sig.returns.push(AbiParam::new(word));
+
+    let callee = jit
+        .module
+        .declare_function("alloc", cranelift_module::Linkage::Import, &sig)
+        .map_err(|e| e.to_string())?;
+
+    let local_callee = jit.module.declare_func_in_func(callee, &mut builder.func);
+    let size = builder.ins().iconst(word, 2);
+    let args = vec![size];
+    let call = builder.ins().call(local_callee, &args);
+
+    let storage = builder.inst_results(call)[0];
+    let data = builder.ins().load(word, MemFlags::new(), ptr, 0);
+
+    // Make a call to ourselves to get the rest.
+    let mut sig = jit.module.make_signature();
+    sig.params.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(word));
+    sig.returns.push(AbiParam::new(word));
+
+    let callee = jit
+        .module
+        .declare_function(
+            "contiguous-to-list",
+            cranelift_module::Linkage::Import,
+            &sig,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let local_callee = jit.module.declare_func_in_func(callee, &mut builder.func);
+
+    let new_ptr = builder.ins().iadd_imm(ptr, word.bytes() as i64);
+    let new_len = builder.ins().iadd_imm(len, -1);
+
+    let args = vec![new_ptr, new_len];
+    let call = builder.ins().call(local_callee, &args);
+
+    let next = builder.inst_results(call)[0];
+
+    builder.ins().store(MemFlags::new(), data, storage, 0);
+    builder
+        .ins()
+        .store(MemFlags::new(), next, storage, word.bytes() as i32);
+
+    let res = builder.ins().bor_imm(storage, conversions::PAIR_TAG);
+    builder.ins().return_(&[res]);
+
+    builder.seal_all_blocks();
+    builder.finalize();
+
+    let id = jit
+        .module
+        .declare_function(
+            "contiguous-to-list",
+            cranelift_module::Linkage::Export,
+            &jit.context.func.signature,
+        )
+        .map_err(|e| e.to_string())?;
+
+    jit.module
+        .define_function(id, &mut jit.context, &mut NullTrapSink {})
+        .map_err(|e| e.to_string())?;
+
+    jit.module.clear_context(&mut jit.context);
+
+    Ok(())
 }
 
 #[cfg(test)]

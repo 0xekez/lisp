@@ -30,7 +30,8 @@ fn main() {
 
     timer::init(cli_opts.is_present("timeit"));
 
-    if let Err(s) = lustc::roundtrip_file(file) {
-        println!("error: {}", s)
+    match lustc::roundtrip_file(file) {
+        Ok(e) => println!("=> {:?}", e),
+        Err(s) => eprintln!("error: {}", s),
     }
 }
