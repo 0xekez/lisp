@@ -24,9 +24,9 @@ use crate::renamer;
 use crate::Expr;
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::*;
+use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::DataContext;
 use cranelift_module::{Linkage, Module};
-use cranelift_simplejit::{SimpleJITBuilder, SimpleJITModule};
 use primitives::define_contiguous_to_list;
 use primitives::string_is_primitive;
 use procedures::emit_procedure;
@@ -44,7 +44,7 @@ pub struct JIT {
     pub context: codegen::Context,
 
     /// Used to emit code directly into memory for execution.
-    pub module: SimpleJITModule,
+    pub module: JITModule,
 
     // Stores information about data objects that the JIT owns.
     pub data_ctx: DataContext,
@@ -53,7 +53,7 @@ pub struct JIT {
 /// Manages the state needed for compilation of a function by lustc.
 pub(crate) struct Context<'a> {
     pub builder: FunctionBuilder<'a>,
-    pub module: &'a mut SimpleJITModule,
+    pub module: &'a mut JITModule,
     pub word: types::Type,
     pub env: HashMap<String, Variable>,
     pub fnmap: HashMap<String, LustFn>,
@@ -65,8 +65,8 @@ pub(crate) struct Context<'a> {
 
 impl Default for JIT {
     fn default() -> Self {
-        let builder = SimpleJITBuilder::new(cranelift_module::default_libcall_names());
-        let module = SimpleJITModule::new(builder);
+        let builder = JITBuilder::new(cranelift_module::default_libcall_names());
+        let module = JITModule::new(builder);
         let mut jit = Self {
             builder_context: FunctionBuilderContext::new(),
             context: module.make_context(),
@@ -83,7 +83,7 @@ impl Default for JIT {
 impl<'a> Context<'a> {
     pub fn new(
         builder: FunctionBuilder<'a>,
-        module: &'a mut SimpleJITModule,
+        module: &'a mut JITModule,
         word: types::Type,
         env: HashMap<String, Variable>,
         fnmap: HashMap<String, LustFn>,

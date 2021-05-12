@@ -880,7 +880,7 @@ pub(crate) fn emit_contigous_to_list(
     Ok(res)
 }
 
-// Defined the function contiguous-to-list which converts a contiguous
+// Defines the function contiguous-to-list which converts a contiguous
 // vec of values into a list.
 pub(crate) fn define_contiguous_to_list(jit: &mut JIT) -> Result<(), String> {
     let word = jit.module.target_config().pointer_type();

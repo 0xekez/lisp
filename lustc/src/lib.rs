@@ -75,21 +75,6 @@ pub(crate) enum PreorderStatus {
 impl Expr {
     /// Performs a postorder traversal of the expr calling F on each
     /// item it encounters.
-    pub(crate) fn postorder_traverse<F>(&self, f: &mut F)
-    where
-        F: FnMut(&Expr),
-    {
-        match self {
-            Expr::List(v) => {
-                for e in v {
-                    e.postorder_traverse(f);
-                }
-                f(self);
-            }
-            _ => f(self),
-        }
-    }
-
     pub(crate) fn postorder_traverse_res<F, E>(&self, f: &mut F) -> Result<(), E>
     where
         F: FnMut(&Expr) -> Result<(), E>,
