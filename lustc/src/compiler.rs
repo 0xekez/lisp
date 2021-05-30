@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 
 use crate::conditional;
+use crate::conversions::print_lustc_word;
 use crate::data;
 use crate::escape;
 use crate::fatal;
@@ -65,7 +66,12 @@ pub(crate) struct Context<'a> {
 
 impl Default for JIT {
     fn default() -> Self {
-        let builder = JITBuilder::new(cranelift_module::default_libcall_names());
+        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
+
+        // Register the print function.
+        let print_addr = print_lustc_word as *const u8;
+        builder.symbol("print_lustc_word", print_addr);
+
         let module = JITModule::new(builder);
         let mut jit = Self {
             builder_context: FunctionBuilderContext::new(),

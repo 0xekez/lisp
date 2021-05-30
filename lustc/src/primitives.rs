@@ -1,4 +1,9 @@
-//! Handles primitive functions in Lust.
+//! Handles primitive functions in Lust. For primitives that are only
+//! used in the head position of a list we don't need to create a
+//! higher order version of them and can just emit them inline. For
+//! that we use the emit_primcall function. For primitives that are
+//! used in a higher order context we don't have such a luxury and
+//! need to actually make a function.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -173,6 +178,36 @@ pub(crate) fn emit_primitives(
                 .builder
                 .ins()
                 .iadd_imm(accum, Expr::Integer(1).immediate_rep()))
+        })?);
+    }
+
+    if higher_order_primitives.contains("print") {
+        res.push(emit_primitive("print", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(ctx.word));
+            sig.returns.push(AbiParam::new(ctx.word));
+
+            let callee = ctx
+                .module
+                .declare_function("print_lustc_word", cranelift_module::Linkage::Import, &sig)
+                .map_err(|e| e.to_string())?;
+
+            let local_callee = ctx
+                .module
+                .declare_func_in_func(callee, &mut ctx.builder.func);
+
+            let args = vec![accum];
+
+            let call = ctx.builder.ins().call(local_callee, &args);
+            let res = ctx.builder.inst_results(call)[0];
+
+            Ok(res)
         })?);
     }
 
@@ -789,6 +824,28 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
                 .ins()
                 .load(ctx.word, MemFlags::new(), address, ctx.word.bytes() as i32)
         }
+
+        "print" => {
+            check_arg_len("print", args, 1)?;
+            let arg = emit_expr(&args[0], ctx)?;
+            let args = vec![arg];
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(ctx.word));
+            sig.returns.push(AbiParam::new(ctx.word));
+
+            let callee = ctx
+                .module
+                .declare_function("print_lustc_word", cranelift_module::Linkage::Import, &sig)
+                .map_err(|e| e.to_string())?;
+
+            let local_callee = ctx
+                .module
+                .declare_func_in_func(callee, &mut ctx.builder.func);
+
+            let call = ctx.builder.ins().call(local_callee, &args);
+            ctx.builder.inst_results(call)[0]
+        }
         _ => panic!("non primitive in emit_primcall: {}", name),
     })
 }
@@ -812,6 +869,7 @@ pub(crate) fn string_is_builtin(s: &str) -> bool {
 
 pub(crate) fn string_is_primitive(s: &str) -> bool {
     s == "add1"
+        || s == "print"
         || s == "integer->char"
         || s == "char->integer"
         || s == "null?"

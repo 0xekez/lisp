@@ -1,3 +1,4 @@
+use std::fmt;
 use std::os::raw::c_char;
 
 use crate::{Expr, UWord, Word};
@@ -140,6 +141,34 @@ impl Expr {
             _ if word_is_nil(what) => Expr::Nil,
             _ if word_is_string(what) => string_from_immediate(what),
             _ => Expr::Nil,
+        }
+    }
+}
+
+pub fn print_lustc_word(word: Word) -> Word {
+    let expr = Expr::from_immediate(word);
+    println!("{}", expr);
+    Expr::Nil.immediate_rep()
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Expr::Integer(i) => write!(f, "{}", i),
+            Expr::Char(c) => write!(f, "{}", c),
+            Expr::Bool(b) => write!(f, "{}", b),
+            Expr::Nil => write!(f, "nil"),
+            Expr::List(l) => write!(f, "({}, {})", l[0], l[1]),
+            // sbcl capitalizes symbols when writing them out to stdout.
+            Expr::Symbol(s) => write!(f, "{}", s.to_uppercase()),
+            Expr::String(s) => write!(
+                f,
+                "{}",
+                match s.to_str() {
+                    Ok(s) => s,
+                    Err(_) => return Err(fmt::Error),
+                }
+            ),
         }
     }
 }
