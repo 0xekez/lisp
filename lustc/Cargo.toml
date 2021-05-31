@@ -11,5 +11,6 @@ colored = "2"
 cranelift = "0.69.0"
 cranelift-module = "0.69.0"
 cranelift-jit = "0.69.0"
-cranelift-codegen = "0.69.0"
+cranelift-codegen = {version = "0.69.0", features = ["unwind"]}
 clap = "~2.27.0"
+backtrace = "0.3"

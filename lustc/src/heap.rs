@@ -47,6 +47,18 @@ pub fn define_alloc(jit: &mut JIT) -> Result<(), String> {
     let call = builder.ins().call(local_callee, &args);
     let res = builder.inst_results(call)[0];
 
+    // Trigger the garbage collector
+    let sig = jit.module.make_signature();
+
+    let callee = jit
+        .module
+        .declare_function("do_gc", cranelift_module::Linkage::Import, &sig)
+        .map_err(|e| e.to_string())?;
+
+    let local_callee = jit.module.declare_func_in_func(callee, &mut builder.func);
+
+    builder.ins().call(local_callee, &[]);
+
     builder.ins().return_(&[res]);
 
     builder.seal_all_blocks();

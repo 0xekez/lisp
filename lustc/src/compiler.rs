@@ -17,6 +17,7 @@ use crate::data;
 use crate::escape;
 use crate::fatal;
 use crate::foreign;
+use crate::gc::do_gc;
 use crate::heap::define_alloc;
 use crate::locals;
 use crate::primitives;
@@ -73,6 +74,10 @@ impl Default for JIT {
         builder.symbol("print_lustc_word", print_addr);
         let println_addr = println_lustc_word as *const u8;
         builder.symbol("println_lustc_word", println_addr);
+
+        // Register the do_gc function.
+        let do_gc_addr = do_gc as *const u8;
+        builder.symbol("do_gc", do_gc_addr);
 
         let module = JITModule::new(builder);
         let mut jit = Self {

@@ -92,6 +92,8 @@ pub fn emit_procedure(
     // expression.
     jit.context.func.signature.returns.push(AbiParam::new(word));
 
+    println!("{:?}", jit.context.create_unwind_info(jit.module.isa()));
+
     let mut builder = FunctionBuilder::new(&mut jit.context.func, &mut jit.builder_context);
     let entry_block = builder.create_block();
 

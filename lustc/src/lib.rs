@@ -6,6 +6,7 @@ pub mod errors;
 pub mod escape;
 pub mod fatal;
 pub mod foreign;
+pub mod gc;
 pub mod heap;
 pub mod locals;
 pub mod location;
