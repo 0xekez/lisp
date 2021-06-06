@@ -14,3 +14,4 @@ cranelift-jit = "0.69.0"
 cranelift-codegen = {version = "0.69.0", features = ["unwind"]}
 clap = "~2.27.0"
 backtrace = "0.3"
+gimli = { version = "0.24.0", default-features = false, features = ["write"]}

@@ -8,7 +8,7 @@ version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a55f82cfe485775d02112886f4169bde0c5894d75e79ead7eafe7e40a25e45f7"
 dependencies = [
- "gimli",
+ "gimli 0.23.0",
 ]
 
 [[package]]
@@ -152,7 +152,7 @@ dependencies = [
  "cranelift-codegen-meta",
  "cranelift-codegen-shared",
  "cranelift-entity",
- "gimli",
+ "gimli 0.23.0",
  "log",
  "regalloc",
  "smallvec",
@@ -274,6 +274,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gimli"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e4075386626662786ddb0ec9081e7c7eeb1ba31951f447ca780ef9f5d568189"
+dependencies = [
+ "indexmap",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -330,6 +339,7 @@ dependencies = [
  "cranelift-codegen",
  "cranelift-jit",
  "cranelift-module",
+ "gimli 0.24.0",
 ]
 
 [[package]]
