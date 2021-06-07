@@ -14,7 +14,7 @@ impl Expr {
             if let Some(Expr::Symbol(s)) = v.first() {
                 if s == "foreign-call" && v.len() >= 2 {
                     if let Expr::String(name) = &v[1] {
-                        return Some((name.clone().into_string().unwrap(), &v[2..]));
+                        return Some((name.clone(), &v[2..]));
                     }
                 }
             }
@@ -27,7 +27,7 @@ impl Expr {
             if let Some(Expr::Symbol(s)) = v.first() {
                 if s == "foreign-call" && v.len() >= 2 {
                     if let Expr::String(name) = &v[1] {
-                        return Some((name.clone().into_string().unwrap(), &mut v[2..]));
+                        return Some((name.clone(), &mut v[2..]));
                     }
                 }
             }
@@ -169,52 +169,4 @@ pub(crate) fn emit_untag(expr: &Expr, ctx: &mut Context) -> Result<Value, String
 
     let arg = ctx.builder.block_params(return_block)[0];
     Ok(arg)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::ffi::CString;
-
-    use crate::roundtrip_string;
-
-    use super::*;
-
-    #[test]
-    fn puts() {
-        let source = r#"
-(let res (foreign-call "puts" "test of puts"))
-"#;
-        let res = roundtrip_string(source).unwrap();
-        match res {
-            Expr::Integer(i) => assert!(i >= 0),
-            _ => panic!("expected fixnum"),
-        }
-    }
-
-    #[test]
-    fn strlen() {
-        let source = r#"
-(let res (foreign-call "strlen" "four"))
-"#;
-        let res = roundtrip_string(source).unwrap();
-        match res {
-            Expr::Integer(i) => assert_eq!(i, 4),
-            _ => panic!("expected fixnum"),
-        }
-    }
-
-    #[test]
-    fn open_read() {
-        let source = r#"
-(let fd (foreign-call "open" "examples/file.lisp" 0))
-(let bar "hello there")
-(foreign-call "read" fd bar 11)
-bar
-"#;
-        let res = roundtrip_string(source).unwrap();
-        let file = std::fs::read_to_string("examples/file.lisp").unwrap();
-        let expected = &file[0..11];
-        let expected = CString::new(expected).unwrap();
-        assert_eq!(res, Expr::String(expected))
-    }
 }

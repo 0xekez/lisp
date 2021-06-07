@@ -41,7 +41,9 @@ pub(crate) fn emit_error_strings(jit: &mut JIT) -> Result<(), String> {
         .map(|(name, msg)| -> Result<LustData, std::ffi::NulError> {
             Ok(LustData {
                 name: name.to_string(),
-                data: crate::conversions::string_to_immediate(&std::ffi::CString::new(*msg)?),
+                // bit of a hack but we tag these as pairs so that
+                // they register as heap allocated values elsewhere.
+                data: std::ffi::CString::new(*msg)?.into_raw() as Word | conversions::PAIR_TAG,
             })
         })
         .collect::<Result<Vec<LustData>, _>>()

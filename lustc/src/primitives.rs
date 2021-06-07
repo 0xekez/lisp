@@ -211,6 +211,40 @@ pub(crate) fn emit_primitives(
         })?);
     }
 
+    if higher_order_primitives.contains("println") {
+        res.push(emit_primitive("println", 1, jit, |ctx| {
+            let block = ctx.builder.current_block().unwrap();
+            let args = ctx.builder.block_params(block);
+            emit_check_arg_count(1, args[1], ctx, false)?;
+            let args = get_primitive_args(ctx, block, 1);
+            let accum = args[0];
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(ctx.word));
+            sig.returns.push(AbiParam::new(ctx.word));
+
+            let callee = ctx
+                .module
+                .declare_function(
+                    "println_lustc_word",
+                    cranelift_module::Linkage::Import,
+                    &sig,
+                )
+                .map_err(|e| e.to_string())?;
+
+            let local_callee = ctx
+                .module
+                .declare_func_in_func(callee, &mut ctx.builder.func);
+
+            let args = vec![accum];
+
+            let call = ctx.builder.ins().call(local_callee, &args);
+            let res = ctx.builder.inst_results(call)[0];
+
+            Ok(res)
+        })?);
+    }
+
     if higher_order_primitives.contains("integer->char") {
         res.push(emit_primitive("integer->char", 1, jit, |ctx| {
             let block = ctx.builder.current_block().unwrap();
@@ -291,12 +325,9 @@ pub(crate) fn emit_primitives(
             // To get the not of a boolean, subtract one from it and
             // then take the absolute value.
             let accum = ctx.builder.ins().sshr_imm(accum, conversions::BOOL_SHIFT);
-            let accum = ctx.builder.ins().iadd_imm(accum, -1);
-            // FIXME: there is some serious black magic surrounding
-            // why we don't need to take the absolute value
-            // here. Taking the absolute value causes a compilation
-            // error when cranelift is verifying things.
-            // let accum = builder.ins().iabs(accum);
+            let accum = ctx.builder.ins().icmp_imm(IntCC::Equal, accum, 0);
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
+
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
     }
@@ -635,12 +666,8 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             // To get the not of a boolean, subtract one from it and
             // then take the absolute value.
             let accum = ctx.builder.ins().sshr_imm(accum, conversions::BOOL_SHIFT);
-            let accum = ctx.builder.ins().iadd_imm(accum, -1);
-            // FIXME: there is some serious black magic surrounding
-            // why we don't need to take the absolute value
-            // here. Taking the absolute value causes a compilation
-            // error when cranelift is verifying things.
-            // let accum = ctx.builder.ins().iabs(accum);
+            let accum = ctx.builder.ins().icmp_imm(IntCC::Equal, accum, 0);
+            let accum = ctx.builder.ins().bint(ctx.word, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
         "integer?" => {
@@ -846,6 +873,33 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let call = ctx.builder.ins().call(local_callee, &args);
             ctx.builder.inst_results(call)[0]
         }
+
+        "println" => {
+            check_arg_len("println", args, 1)?;
+            let arg = emit_expr(&args[0], ctx)?;
+            let args = vec![arg];
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(ctx.word));
+            sig.returns.push(AbiParam::new(ctx.word));
+
+            let callee = ctx
+                .module
+                .declare_function(
+                    "println_lustc_word",
+                    cranelift_module::Linkage::Import,
+                    &sig,
+                )
+                .map_err(|e| e.to_string())?;
+
+            let local_callee = ctx
+                .module
+                .declare_func_in_func(callee, &mut ctx.builder.func);
+
+            let call = ctx.builder.ins().call(local_callee, &args);
+            ctx.builder.inst_results(call)[0]
+        }
+
         _ => panic!("non primitive in emit_primcall: {}", name),
     })
 }
@@ -870,6 +924,7 @@ pub(crate) fn string_is_builtin(s: &str) -> bool {
 pub(crate) fn string_is_primitive(s: &str) -> bool {
     s == "add1"
         || s == "print"
+        || s == "println"
         || s == "integer->char"
         || s == "char->integer"
         || s == "null?"
