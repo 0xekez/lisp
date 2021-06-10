@@ -1,5 +1,4 @@
 use std::fmt;
-use std::os::raw::c_char;
 
 use crate::{Expr, UWord, Word};
 
@@ -30,15 +29,8 @@ pub(crate) static PAIR_TAG: Word = 0b001;
 /// Tag for a closure object
 pub(crate) static CLOSURE_TAG: Word = 0b110;
 
-/// Tag for a string object
-pub(crate) static STRING_TAG: Word = 0b011;
-
 pub fn word_is_char(what: Word) -> bool {
     what & CHAR_MASK == CHAR_TAG
-}
-
-pub fn word_is_string(what: Word) -> bool {
-    what & HEAP_TAG_MASK == STRING_TAG
 }
 
 pub fn word_is_int(what: Word) -> bool {
@@ -67,7 +59,6 @@ pub fn word_is_immediate(what: Word) -> bool {
         || word_is_bool(what)
         || word_is_nil(what)
         || word_is_pair(what)
-        || word_is_string(what)
 }
 
 pub fn word_get_object_address(what: Word) -> UWord {
@@ -98,15 +89,9 @@ pub fn list_from_immediate(ptr_word: Word) -> Expr {
     Expr::List(vec![first, rest])
 }
 
-pub fn string_to_immediate(string: &std::ffi::CString) -> Word {
-    let ptr = string.clone().into_raw() as Word;
-    ptr | STRING_TAG
-}
-
-pub fn string_from_immediate(string: Word) -> Expr {
-    debug_assert_eq!(string & HEAP_TAG_MASK, STRING_TAG);
-    let ptr = (string & HEAP_PTR_MASK) as *mut c_char;
-    Expr::String(unsafe { std::ffi::CString::from_raw(ptr) })
+pub fn string_to_immediate(string: &str) -> Word {
+    let chars = string.chars().map(|c| Expr::Char(c)).collect::<Vec<_>>();
+    list_to_immediate(&chars)
 }
 
 impl Expr {
@@ -139,7 +124,6 @@ impl Expr {
                 Expr::Bool(unsafe { std::mem::transmute_copy(&(what >> BOOL_SHIFT)) })
             }
             _ if word_is_nil(what) => Expr::Nil,
-            _ if word_is_string(what) => string_from_immediate(what),
             _ => Expr::Nil,
         }
     }
@@ -147,8 +131,38 @@ impl Expr {
 
 pub fn print_lustc_word(word: Word) -> Word {
     let expr = Expr::from_immediate(word);
+    print!("{}", expr);
+    Expr::Nil.immediate_rep()
+}
+
+pub fn println_lustc_word(word: Word) -> Word {
+    let expr = Expr::from_immediate(word);
     println!("{}", expr);
     Expr::Nil.immediate_rep()
+}
+
+/// Tries to convert E into a string. E is convertable into a string
+/// if it is a well formed list that contains only characters.
+fn try_stringify_list(e: &Expr) -> Option<String> {
+    let l = match e {
+        Expr::List(l) => l,
+        _ => return None,
+    };
+
+    let c = match l[0] {
+        Expr::Char(c) => c,
+        _ => return None,
+    };
+
+    let r = match l[1] {
+        Expr::Nil => "".to_string(),
+        _ => match try_stringify_list(&l[1]) {
+            Some(s) => s,
+            None => return None,
+        },
+    };
+
+    Some(format!("{}{}", c, r))
 }
 
 impl fmt::Display for Expr {
@@ -158,17 +172,13 @@ impl fmt::Display for Expr {
             Expr::Char(c) => write!(f, "{}", c),
             Expr::Bool(b) => write!(f, "{}", b),
             Expr::Nil => write!(f, "nil"),
-            Expr::List(l) => write!(f, "({}, {})", l[0], l[1]),
+            Expr::List(l) => match try_stringify_list(self) {
+                Some(s) => write!(f, "{}", s),
+                None => write!(f, "({}, {})", l[0], l[1]),
+            },
             // sbcl capitalizes symbols when writing them out to stdout.
             Expr::Symbol(s) => write!(f, "{}", s.to_uppercase()),
-            Expr::String(s) => write!(
-                f,
-                "{}",
-                match s.to_str() {
-                    Ok(s) => s,
-                    Err(_) => return Err(fmt::Error),
-                }
-            ),
+            Expr::String(s) => write!(f, "{}", s),
         }
     }
 }

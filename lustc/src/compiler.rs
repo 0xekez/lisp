@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 
 use crate::conditional;
-use crate::conversions::print_lustc_word;
+use crate::conversions::{print_lustc_word, println_lustc_word};
 use crate::data;
 use crate::escape;
 use crate::fatal;
@@ -71,6 +71,8 @@ impl Default for JIT {
         // Register the print function.
         let print_addr = print_lustc_word as *const u8;
         builder.symbol("print_lustc_word", print_addr);
+        let println_addr = println_lustc_word as *const u8;
+        builder.symbol("println_lustc_word", println_addr);
 
         let module = JITModule::new(builder);
         let mut jit = Self {

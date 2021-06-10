@@ -34,7 +34,7 @@ pub enum Expr {
     Nil,
     List(Vec<Expr>),
     Symbol(String),
-    String(std::ffi::CString),
+    String(String),
 }
 
 impl crate::parser::Expr {
@@ -55,9 +55,7 @@ impl crate::parser::Expr {
                     )
                 }
             }
-            ExprVal::String(s) => Expr::String(
-                std::ffi::CString::new(s).map_err(|e| format!("unsupported string: {} ", e))?,
-            ),
+            ExprVal::String(s) => Expr::String(s),
         })
     }
 }

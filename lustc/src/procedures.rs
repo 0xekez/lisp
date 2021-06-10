@@ -282,11 +282,12 @@ pub struct LustFn {
 }
 
 fn is_varadic_param(p: &str) -> bool {
-    p.len() == 3 && p.chars().last() == Some('&')
+    p.chars().last() == Some('&')
 }
 
 fn is_varadic_signature(sig: &[&String]) -> bool {
-    sig.iter().any(|p| is_varadic_param(p))
+    let varadic = sig.iter().any(|p| is_varadic_param(p));
+    varadic
 }
 
 fn get_and_validate_varadic(sig: &[&String]) -> Result<String, String> {
@@ -724,6 +725,12 @@ mod tests {
     fn do_impl() {
         let res = roundtrip_file("examples/do.lisp").unwrap();
         assert_eq!(res, Expr::Integer(11))
+    }
+
+    #[test]
+    fn printf_impl() {
+        let res = roundtrip_file("examples/format.lisp").unwrap();
+        assert_eq!(res, Expr::Bool(true))
     }
 
     #[test]
