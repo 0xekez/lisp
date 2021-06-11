@@ -1,3 +1,5 @@
+;; String formatting for Lust in Lust
+
 (let #t (eq 1 1))
 (let #f (eq 0 1))
 
