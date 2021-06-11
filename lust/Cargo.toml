@@ -8,9 +8,6 @@ edition = "2018"
 
 [dependencies]
 colored = "2"
-cranelift = "0.67.0"
-cranelift-module = "0.67.0"
-cranelift-simplejit = "0.67.0"
 rustyline = "7.0.0"
 rev_slice = "0.1.5"
 rustyline-derive = "0.4.0"

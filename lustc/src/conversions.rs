@@ -129,13 +129,13 @@ impl Expr {
     }
 }
 
-pub fn print_lustc_word(word: Word) -> Word {
+pub extern "C" fn print_lustc_word(word: Word) -> Word {
     let expr = Expr::from_immediate(word);
     print!("{}", expr);
     Expr::Nil.immediate_rep()
 }
 
-pub fn println_lustc_word(word: Word) -> Word {
+pub extern "C" fn println_lustc_word(word: Word) -> Word {
     let expr = Expr::from_immediate(word);
     println!("{}", expr);
     Expr::Nil.immediate_rep()
@@ -165,16 +165,53 @@ fn try_stringify_list(e: &Expr) -> Option<String> {
     Some(format!("{}{}", c, r))
 }
 
+fn list_is_well_formed(l: &[Expr]) -> bool {
+    match &l[1] {
+        Expr::Nil => true,
+        Expr::List(l) => list_is_well_formed(&l),
+        _ => false,
+    }
+}
+
+fn stringify_well_formed_list(e: &Expr) -> String {
+    match e {
+        Expr::List(l) => match &l[1] {
+            Expr::Nil => format!("{}", l[0]),
+            _ => format!("{}, {}", l[0], stringify_well_formed_list(&l[1])),
+        },
+        _ => {
+            debug_assert!(false, "list is not well formed");
+            format!("{}", e)
+        }
+    }
+}
+
+fn try_prettify_list(e: &Expr) -> Option<String> {
+    let l = match e {
+        Expr::List(l) => l,
+        _ => return None,
+    };
+
+    if !list_is_well_formed(&l) {
+        return None;
+    }
+
+    Some(format!("({})", stringify_well_formed_list(e)))
+}
+
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Integer(i) => write!(f, "{}", i),
-            Expr::Char(c) => write!(f, "{}", c),
+            Expr::Char(c) => write!(f, "'{}'", c),
             Expr::Bool(b) => write!(f, "{}", b),
             Expr::Nil => write!(f, "nil"),
             Expr::List(l) => match try_stringify_list(self) {
-                Some(s) => write!(f, "{}", s),
-                None => write!(f, "({}, {})", l[0], l[1]),
+                Some(s) => write!(f, "\"{}\"", s),
+                None => match try_prettify_list(self) {
+                    Some(s) => write!(f, "{}", s),
+                    None => write!(f, "({}, {})", l[0], l[1]),
+                },
             },
             // sbcl capitalizes symbols when writing them out to stdout.
             Expr::Symbol(s) => write!(f, "{}", s.to_uppercase()),
@@ -213,6 +250,21 @@ mod tests {
         for c in 'a'..'z' {
             test_roundtrip(Expr::Char(c));
         }
+    }
+
+    #[test]
+    fn list_well_formed() {
+        let good = vec![
+            Expr::Char('a'),
+            Expr::List(vec![Expr::Integer(10), Expr::Nil]),
+        ];
+        let bad = vec![
+            Expr::Char('a'),
+            Expr::List(vec![Expr::Integer(10), Expr::Integer(11)]),
+        ];
+
+        assert!(list_is_well_formed(&good));
+        assert!(!list_is_well_formed(&bad));
     }
 
     #[test]

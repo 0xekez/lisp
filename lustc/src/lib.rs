@@ -246,6 +246,12 @@ mod tests {
     }
 
     #[test]
+    fn tokenizer_file() {
+        let expected = Expr::Bool(true);
+        test_file_evaluation("examples/tokenizer.lisp", expected)
+    }
+
+    #[test]
     fn cons_file() {
         let expected = Expr::Integer(10);
         test_file_evaluation("examples/cons.lisp", expected)
