@@ -12,7 +12,10 @@ use cranelift_module::Module;
 use crate::compiler::JIT;
 
 // Emits an 'alloc' function which when called makes a call to malloc.
-pub fn define_alloc(jit: &mut JIT) -> Result<(), String> {
+pub fn define_alloc(
+    jit: &mut JIT,
+    unwind_context: &mut crate::debug::UnwindContext,
+) -> Result<(), String> {
     let _t = crate::timer::timeit("emit alloc");
     let word = jit.module.target_config().pointer_type();
 
@@ -48,7 +51,8 @@ pub fn define_alloc(jit: &mut JIT) -> Result<(), String> {
     let res = builder.inst_results(call)[0];
 
     // Trigger the garbage collector
-    let sig = jit.module.make_signature();
+    let mut sig = jit.module.make_signature();
+    sig.params.push(AbiParam::new(word));
 
     let callee = jit
         .module
@@ -57,7 +61,7 @@ pub fn define_alloc(jit: &mut JIT) -> Result<(), String> {
 
     let local_callee = jit.module.declare_func_in_func(callee, &mut builder.func);
 
-    builder.ins().call(local_callee, &[]);
+    builder.ins().call(local_callee, &[size]);
 
     builder.ins().return_(&[res]);
 
@@ -76,6 +80,8 @@ pub fn define_alloc(jit: &mut JIT) -> Result<(), String> {
     jit.module
         .define_function(id, &mut jit.context, &mut NullTrapSink {})
         .map_err(|e| e.to_string())?;
+
+    unwind_context.add_function(id, &jit.context, jit.module.isa())?;
 
     jit.module.clear_context(&mut jit.context);
 

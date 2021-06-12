@@ -76,6 +76,7 @@ pub fn emit_procedure(
     body: &[Expr],
     varadic_symbol: &Option<String>,
     fnmap: &HashMap<String, LustFn>,
+    unwind_context: &mut crate::debug::UnwindContext,
 ) -> Result<(), String> {
     let word = jit.module.target_config().pointer_type();
 
@@ -91,8 +92,6 @@ pub fn emit_procedure(
     // All lust functions return the result of evaluating their last
     // expression.
     jit.context.func.signature.returns.push(AbiParam::new(word));
-
-    println!("{:?}", jit.context.create_unwind_info(jit.module.isa()));
 
     let mut builder = FunctionBuilder::new(&mut jit.context.func, &mut jit.builder_context);
     let entry_block = builder.create_block();
@@ -199,8 +198,7 @@ pub fn emit_procedure(
         .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
         .map_err(|e| e.to_string())?;
 
-    // If you want to dump the generated IR this is the way:
-    // println!("{}", jit.context.func.display(jit.module.isa()));
+    unwind_context.add_function(id, &jit.context, jit.module.isa())?;
 
     jit.module.clear_context(&mut jit.context);
 
@@ -257,6 +255,7 @@ pub(crate) fn emit_fncall(head: &Expr, args: &[Expr], ctx: &mut Context) -> Resu
             (i * word.bytes() as usize) as i32,
         );
     }
+    // Pass the location of the arguments to the function
     argsc.push(argloc);
 
     let sig_ref = ctx.builder.import_signature(sig);

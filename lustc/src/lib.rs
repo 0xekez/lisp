@@ -1,3 +1,5 @@
+#![feature(vec_into_raw_parts)]
+
 pub mod compiler;
 pub mod conditional;
 pub mod conversions;

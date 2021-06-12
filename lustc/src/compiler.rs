@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use crate::conditional;
 use crate::conversions::{print_lustc_word, println_lustc_word};
 use crate::data;
+use crate::debug;
 use crate::escape;
 use crate::fatal;
 use crate::foreign;
@@ -65,8 +66,8 @@ pub(crate) struct Context<'a> {
     pub letstack: Vec<String>,
 }
 
-impl Default for JIT {
-    fn default() -> Self {
+impl JIT {
+    pub fn new() -> (Self, debug::UnwindContext) {
         let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
 
         // Register the print function.
@@ -86,10 +87,13 @@ impl Default for JIT {
             module,
             data_ctx: DataContext::new(),
         };
-        define_alloc(&mut jit).unwrap();
-        define_contiguous_to_list(&mut jit).unwrap();
+
+        let mut unwind_context = debug::UnwindContext::new(jit.module.isa());
+
+        define_alloc(&mut jit, &mut unwind_context).unwrap();
+        define_contiguous_to_list(&mut jit, &mut unwind_context).unwrap();
         crate::fatal::emit_error_strings(&mut jit).unwrap();
-        jit
+        (jit, unwind_context)
     }
 }
 
@@ -153,7 +157,7 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
 }
 
 pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
-    let mut jit = JIT::default();
+    let (mut jit, mut unwind_context) = JIT::new();
 
     // Rename symbols so that they are all unique.
     renamer::make_names_unique(program)?;
@@ -210,6 +214,7 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
                 &f.body,
                 &f.varadic_symbol,
                 &fnmap,
+                &mut unwind_context,
             )?;
         }
     }
@@ -260,12 +265,15 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
             .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
             .map_err(|e| e.to_string())?;
 
+        unwind_context.add_function(id, &jit.context, jit.module.isa())?;
+
         // If you want to dump the generated IR this is the way:
         // println!("{}", jit.context.func.display(jit.module.isa()));
 
         jit.module.clear_context(&mut jit.context);
 
         jit.module.finalize_definitions();
+        unsafe { unwind_context.register_jit(&jit.module) };
 
         let code_ptr = jit.module.get_finalized_function(id);
 
@@ -280,7 +288,7 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
 /// an expression.
 #[cfg(test)]
 pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
-    let mut jit = JIT::default();
+    let (mut jit, mut unwind_context) = JIT::new();
 
     let word = jit.module.target_config().pointer_type();
 
@@ -340,9 +348,13 @@ pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
         .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
         .map_err(|e| e.to_string())?;
 
+    unwind_context.add_function(id, &jit.context, jit.module.isa())?;
+
     jit.module.clear_context(&mut jit.context);
 
     jit.module.finalize_definitions();
+
+    unsafe { unwind_context.register_jit(&jit.module) };
 
     let code_ptr = jit.module.get_finalized_function(id);
 
@@ -353,7 +365,7 @@ pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
 
 #[cfg(test)]
 pub fn roundtrip_exprs(exprs: &[Expr]) -> Result<Expr, String> {
-    let mut jit = JIT::default();
+    let (mut jit, mut unwind_context) = JIT::new();
 
     let word = jit.module.target_config().pointer_type();
 
@@ -405,12 +417,16 @@ pub fn roundtrip_exprs(exprs: &[Expr]) -> Result<Expr, String> {
         .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
         .map_err(|e| e.to_string())?;
 
+    unwind_context.add_function(id, &jit.context, jit.module.isa())?;
+
     // If you want to dump the generated IR this is the way:
     // println!("{}", jit.context.func.display(jit.module.isa()));
 
     jit.module.clear_context(&mut jit.context);
 
     jit.module.finalize_definitions();
+
+    unsafe { unwind_context.register_jit(&jit.module) };
 
     let code_ptr = jit.module.get_finalized_function(id);
 

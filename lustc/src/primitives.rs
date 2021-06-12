@@ -995,7 +995,10 @@ pub(crate) fn emit_contigous_to_list(
 
 // Defines the function contiguous-to-list which converts a contiguous
 // vec of values into a list.
-pub(crate) fn define_contiguous_to_list(jit: &mut JIT) -> Result<(), String> {
+pub(crate) fn define_contiguous_to_list(
+    jit: &mut JIT,
+    unwind_context: &mut crate::debug::UnwindContext,
+) -> Result<(), String> {
     let word = jit.module.target_config().pointer_type();
 
     // A pointer to the beginning of the contiguous memory
@@ -1098,6 +1101,8 @@ pub(crate) fn define_contiguous_to_list(jit: &mut JIT) -> Result<(), String> {
     jit.module
         .define_function(id, &mut jit.context, &mut NullTrapSink {})
         .map_err(|e| e.to_string())?;
+
+    unwind_context.add_function(id, &jit.context, jit.module.isa())?;
 
     jit.module.clear_context(&mut jit.context);
 
