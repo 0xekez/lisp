@@ -18,7 +18,8 @@ use crate::debug;
 use crate::escape;
 use crate::fatal;
 use crate::foreign;
-use crate::gc::do_gc;
+use crate::gc;
+use crate::gc::{do_gc, LocalValueCollector};
 use crate::heap::define_alloc;
 use crate::locals;
 use crate::primitives;
@@ -60,6 +61,7 @@ pub(crate) struct Context<'a> {
     pub word: types::Type,
     pub env: HashMap<String, Variable>,
     pub fnmap: HashMap<String, LustFn>,
+    pub local_collector: LocalValueCollector,
     // A stack of variables that are curently being defined. These
     // variables are in a "defined but not initialized state" and
     // closures care about this.
@@ -113,6 +115,7 @@ impl<'a> Context<'a> {
             env,
             fnmap,
             letstack,
+            local_collector: LocalValueCollector::new(),
         }
     }
 }
@@ -199,9 +202,8 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     escape::annotate_escaped_variables(&mut functions, program)?;
 
     // Build a map from anonymous names to values
-    let mut fnmap = procedures::build_fn_map(functions);
-    // Extend the function map with the builtin functions
-    fnmap.extend(primitive_fns.into_iter().map(|f| (f.name.clone(), f)));
+    let fnmap = procedures::build_fn_map(functions, primitive_fns);
+    let lustc_main_id = fnmap.len();
 
     {
         let _t = crate::timer::timeit("procedure compilation");
@@ -210,6 +212,7 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
             emit_procedure(
                 &mut jit,
                 &f.name,
+                f.id,
                 &f.params,
                 &f.body,
                 &f.varadic_symbol,
@@ -255,6 +258,7 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
         // Clean up
         ctx.builder.seal_all_blocks();
         ctx.builder.finalize();
+        let maps = ctx.local_collector.get_maps();
 
         let id = jit
             .module
@@ -266,6 +270,12 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
             .map_err(|e| e.to_string())?;
 
         unwind_context.add_function(id, &jit.context, jit.module.isa())?;
+        gc::register_stackmaps(
+            lustc_main_id as i64,
+            &jit.context.func,
+            jit.module.isa(),
+            maps,
+        );
 
         // If you want to dump the generated IR this is the way:
         // println!("{}", jit.context.func.display(jit.module.isa()));

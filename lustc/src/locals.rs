@@ -56,8 +56,10 @@ pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Valu
     let val = if name.starts_with("e_") {
         let location = emit_alloc(ctx.word.bytes().into(), ctx)?;
         ctx.builder.ins().store(MemFlags::new(), val, location, 0);
+        ctx.local_collector.register_escaped(location);
         location
     } else {
+        ctx.local_collector.register_local(val);
         val
     };
 

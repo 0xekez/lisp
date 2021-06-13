@@ -101,6 +101,8 @@ where
         name: name.to_string(),
         params: (0..arity).map(|n| n.to_string()).collect(),
         body: vec![],
+        // Filled later by build_fn_map,
+        id: 0,
         free_variables: vec![],
         varadic_symbol: None,
     })

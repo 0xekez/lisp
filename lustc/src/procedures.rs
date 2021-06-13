@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::compiler::{emit_expr, JIT};
+use crate::gc;
 use crate::heap::{emit_alloc, emit_free};
 use crate::locals::emit_var_decl_and_assign;
 use crate::primitives::emit_contigous_to_list;
@@ -72,6 +73,7 @@ impl Expr {
 pub fn emit_procedure(
     jit: &mut JIT,
     name: &str,
+    fn_id: i64,
     params: &[String],
     body: &[Expr],
     varadic_symbol: &Option<String>,
@@ -99,6 +101,29 @@ pub fn emit_procedure(
     builder.append_block_params_for_function_params(entry_block);
     builder.switch_to_block(entry_block);
     builder.seal_block(entry_block);
+
+    // Create a stack slot to store the function identifier in. The
+    // function identifier will be used by the runtime to map this
+    // function to it's StackMap.
+    let id_slot = builder.func.create_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        word.bytes() * 2,
+    ));
+
+    // The function identifier is identified as a totem followed by
+    // the id. We need to use a totem because despite having an offset
+    // field cranelift doesn not heed that when choosing where on the
+    // stack to put StackSlotData.
+    //
+    // NOTE: it does appear though that this value will generally be
+    // placed in the first stack slot for the function. This inspires
+    // faith that having a local varaible with the same value as the
+    // totem won't cause trouble as we'll stop looking once we find
+    // the first totem.
+    let totem = builder.ins().iconst(word, 0xBA5EBA11);
+    builder.ins().stack_store(totem, id_slot, 0);
+    let id = builder.ins().iconst(word, fn_id);
+    builder.ins().stack_store(id, id_slot, word.bytes() as i32);
 
     let mut ctx = Context::new(
         builder,
@@ -135,14 +160,16 @@ pub fn emit_procedure(
         let val = if p.starts_with("e_") {
             let location = emit_alloc(ctx.word.bytes().into(), &mut ctx)?;
             ctx.builder.ins().store(MemFlags::new(), val, location, 0);
+            ctx.local_collector.register_escaped(location);
             location
         } else {
+            ctx.local_collector.register_local(val);
             val
         };
         emit_var_decl_and_assign(p, val, &mut ctx)?;
     }
 
-    // Assign varadic argument
+    // Assign varadic param
     if let Some(sym) = varadic_symbol {
         let varadic_len = ctx
             .builder
@@ -153,6 +180,7 @@ pub fn emit_procedure(
             .ins()
             .iadd_imm(argloc, (params.len() * word.bytes() as usize) as i64);
         let varadic_val = emit_contigous_to_list(&mut ctx, varadic_ptr, varadic_len)?;
+        ctx.local_collector.register_local(varadic_val);
         emit_var_decl_and_assign(sym, varadic_val, &mut ctx)?;
     }
 
@@ -172,6 +200,7 @@ pub fn emit_procedure(
                 .ins()
                 .load(ctx.word, MemFlags::new(), closure_ptr, byte_offset as i32);
 
+        ctx.local_collector.register_local(val);
         emit_var_decl_and_assign(free, val, &mut ctx)?;
     }
 
@@ -192,6 +221,7 @@ pub fn emit_procedure(
     // Clean up
     ctx.builder.seal_all_blocks();
     ctx.builder.finalize();
+    let maps = ctx.local_collector.get_maps();
 
     let id = jit
         .module
@@ -203,6 +233,7 @@ pub fn emit_procedure(
         .map_err(|e| e.to_string())?;
 
     unwind_context.add_function(id, &jit.context, jit.module.isa())?;
+    gc::register_stackmaps(fn_id, &jit.context.func, jit.module.isa(), maps);
 
     jit.module.clear_context(&mut jit.context);
 
@@ -280,6 +311,9 @@ pub struct LustFn {
     pub params: Vec<String>,
     /// The body of the function.
     pub body: Vec<Expr>,
+    /// A unique numeric identifier for the function. Used by the gc
+    /// for mapping functions to their stack maps.
+    pub id: i64,
     /// Variables that need to be captured in this function's closure.
     pub free_variables: Vec<String>,
     /// The symbol varadic arguments should be bound to if any.
@@ -332,6 +366,8 @@ pub(crate) fn collect_functions(program: &[Expr]) -> Result<Vec<LustFn>, String>
                 res.push(LustFn {
                     name: format!("__anon_fn_{}", res.len()),
                     params: params,
+                    // Filled later by build_fn_map
+                    id: 0,
                     body: body.iter().map(|e| e.clone()).collect(),
                     free_variables: vec![],
                     varadic_symbol,
@@ -344,8 +380,25 @@ pub(crate) fn collect_functions(program: &[Expr]) -> Result<Vec<LustFn>, String>
     Ok(res)
 }
 
-pub(crate) fn build_fn_map(functions: Vec<LustFn>) -> HashMap<String, LustFn> {
-    functions.into_iter().map(|f| (f.name.clone(), f)).collect()
+pub(crate) fn build_fn_map(
+    functions: Vec<LustFn>,
+    primitive_fns: Vec<LustFn>,
+) -> HashMap<String, LustFn> {
+    let mut fn_count = 0;
+    let mut map: HashMap<String, LustFn> = functions
+        .into_iter()
+        .map(|mut f| {
+            f.id = fn_count;
+            fn_count += 1;
+            (f.name.clone(), f)
+        })
+        .collect();
+    map.extend(primitive_fns.into_iter().map(|mut f| {
+        f.id = fn_count;
+        fn_count += 1;
+        (f.name.clone(), f)
+    }));
+    map
 }
 
 /// Replaces functions with their anonymous names. Takes a program and
@@ -711,7 +764,7 @@ mod tests {
     #[test]
     fn fib() {
         let res = roundtrip_file("examples/fib.lisp").unwrap();
-        assert_eq!(res, Expr::Integer(102334155))
+        assert_eq!(res, Expr::Integer(75025))
     }
 
     #[test]

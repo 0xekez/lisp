@@ -352,6 +352,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-module",
  "gimli",
+ "lazy_static",
  "object 0.25.3",
 ]
 
