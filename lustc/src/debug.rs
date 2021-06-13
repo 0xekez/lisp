@@ -18,7 +18,11 @@ pub struct UnwindContext {
 
 impl UnwindContext {
     pub(crate) fn new(isa: &dyn TargetIsa) -> Self {
-        let endian = RunTimeEndian::Little;
+        let endian = if cfg!(target_endian = "little") {
+            RunTimeEndian::Little
+        } else {
+            RunTimeEndian::Big
+        };
         let mut frame_table = FrameTable::default();
 
         let cie_id = match isa.create_systemv_cie() {
@@ -33,6 +37,7 @@ impl UnwindContext {
         }
     }
 
+    /// Registers a function with the unwind frame table.
     pub(crate) fn add_function(
         &mut self,
         func_id: FuncId,
@@ -64,6 +69,7 @@ impl UnwindContext {
         Ok(())
     }
 
+    /// Registers all of the function in the unwind table with JIT_MODULE.
     pub(crate) unsafe fn register_jit(self, jit_module: &cranelift_jit::JITModule) {
         let mut eh_frame = EhFrame::from(WriterRelocate::new(self.endian));
         self.frame_table.write_eh_frame(&mut eh_frame).unwrap();
@@ -74,16 +80,16 @@ impl UnwindContext {
 
         let mut eh_frame = eh_frame.0.relocate_for_jit(jit_module);
 
-        // GCC expects a terminating "empty" length, so write a 0 length at the end of the table.
+        // GCC expects a terminating "empty" length, so write a 0
+        // length at the end of the table.
         eh_frame.extend(&[0, 0, 0, 0]);
 
-        // FIXME support unregistering unwind tables once cranelift-jit supports deallocating
-        // individual functions
         #[allow(unused_variables)]
         let (eh_frame, eh_frame_len, _) = Vec::into_raw_parts(eh_frame);
 
-        // =======================================================================
-        // Everything after this line up to the end of the file is loosly based on
+        // ================================================================
+        // Everything after this line up to the end of the file is
+        // loosly based on
         // https://github.com/bytecodealliance/wasmtime/blob/4471a82b0c540ff48960eca6757ccce5b1b5c3e4/crates/jit/src/unwind/systemv.rs
         #[cfg(target_os = "macos")]
         {
@@ -107,7 +113,8 @@ impl UnwindContext {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            // On other platforms, `__register_frame` will walk the FDEs until an entry of length 0
+            // On other platforms, `__register_frame` will walk the
+            // FDEs until an entry of length 0
             __register_frame(eh_frame);
         }
     }

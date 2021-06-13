@@ -113,3 +113,24 @@ pub(crate) fn emit_alloc(size: i64, ctx: &mut crate::compiler::Context) -> Resul
 
     Ok(res)
 }
+
+pub(crate) fn emit_free(what: Value, ctx: &mut crate::compiler::Context) -> Result<(), String> {
+    let word = ctx.word;
+
+    let mut sig = ctx.module.make_signature();
+    sig.params.push(AbiParam::new(word));
+
+    let callee = ctx
+        .module
+        .declare_function("free", cranelift_module::Linkage::Import, &sig)
+        .map_err(|e| e.to_string())?;
+
+    let local_callee = ctx
+        .module
+        .declare_func_in_func(callee, &mut ctx.builder.func);
+
+    let args = vec![what];
+    ctx.builder.ins().call(local_callee, &args);
+
+    Ok(())
+}

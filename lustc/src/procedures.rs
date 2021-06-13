@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::compiler::{emit_expr, JIT};
-use crate::heap::emit_alloc;
+use crate::heap::{emit_alloc, emit_free};
 use crate::locals::emit_var_decl_and_assign;
 use crate::primitives::emit_contigous_to_list;
 use crate::primitives::string_is_builtin;
@@ -179,6 +179,10 @@ pub fn emit_procedure(
         .iter()
         .map(|e| emit_expr(e, &mut ctx))
         .collect::<Result<Vec<_>, _>>()?;
+
+    // Free the argument's memory. This is equivalent to moving the
+    // stack pointer back.
+    emit_free(argloc, &mut ctx)?;
 
     // Emit a return instruction to return the result.
     ctx.builder.ins().return_(&[*vals
