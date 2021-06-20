@@ -7,7 +7,7 @@ fn main() {
     let cli_opts = {
         App::new("lustc")
             .version("0.1.0")
-            .author("Zeke M. <zekemedley@gmail.com>")
+            .author("Zeke <zekemedley@gmail.com>")
             .about("Compiles and runs lust programs.")
             .arg(
                 Arg::with_name("file")
@@ -30,7 +30,11 @@ fn main() {
 
     timer::init(cli_opts.is_present("timeit"));
 
-    if let Err(s) = lustc::roundtrip_file(file) {
-        eprintln!("error: {}", s)
+    match lustc::roundtrip_file(file) {
+        Err(s) => eprintln!("error: {}", s),
+        Ok(e) => println!("res: {}", e),
     }
+    // if let Err(s) = lustc::roundtrip_file(file) {
+    //     eprintln!("error: {}", s)
+    // }
 }

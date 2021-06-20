@@ -1,3 +1,5 @@
+use cranelift::prelude::*;
+use cranelift_module::Module;
 use std::fmt;
 
 use crate::{Expr, UWord, Word};
@@ -69,7 +71,7 @@ pub fn word_get_object_address(what: Word) -> UWord {
 pub fn list_to_immediate(list: &[Expr]) -> Word {
     if let Some(e) = list.first() {
         let mut pair = Vec::with_capacity(2);
-        pair.push(e.immediate_rep());
+        pair.push(e.word_rep());
         pair.push(list_to_immediate(&list[1..]));
         let ptr_word = pair.as_mut_ptr() as Word;
         std::mem::forget(pair);
@@ -99,7 +101,26 @@ impl Expr {
         true
     }
 
-    pub fn immediate_rep(&self) -> Word {
+    pub(crate) fn immediate_rep(&self, ctx: &mut crate::compiler::Context) -> Value {
+        self.ctxless_immediate_rep(
+            &mut ctx.builder,
+            ctx.module.target_config().pointer_type(),
+            ctx.reftype,
+        )
+    }
+
+    pub(crate) fn ctxless_immediate_rep(
+        &self,
+        builder: &mut FunctionBuilder,
+        ptype: types::Type,
+        reftype: types::Type,
+    ) -> Value {
+        let word_rep = self.word_rep();
+        let word_rep = builder.ins().iconst(ptype, word_rep);
+        builder.ins().raw_bitcast(reftype, word_rep)
+    }
+
+    pub fn word_rep(&self) -> Word {
         debug_assert!(self.is_immediate(), "expected immediate type");
         match self {
             Expr::Integer(i) => (i << FIXNUM_SHIFT) | FIXNUM_TAG,
@@ -132,13 +153,13 @@ impl Expr {
 pub extern "C" fn print_lustc_word(word: Word) -> Word {
     let expr = Expr::from_immediate(word);
     print!("{}", expr);
-    Expr::Nil.immediate_rep()
+    Expr::Nil.word_rep()
 }
 
 pub extern "C" fn println_lustc_word(word: Word) -> Word {
     let expr = Expr::from_immediate(word);
     println!("{}", expr);
-    Expr::Nil.immediate_rep()
+    Expr::Nil.word_rep()
 }
 
 /// Tries to convert E into a string. E is convertable into a string
@@ -275,7 +296,7 @@ mod tests {
     #[test]
     fn rountrip_list() {
         let start = Expr::List(vec![Expr::Integer(1), Expr::Bool(false)]);
-        let start_immediate = start.immediate_rep();
+        let start_immediate = start.word_rep();
         let end = Expr::from_immediate(start_immediate);
 
         // Roundtripping a list results in a cons structure and not a

@@ -20,6 +20,7 @@ use crate::conversions;
 use crate::fatal;
 use crate::fatal::emit_check_arg_count;
 use crate::heap::emit_alloc;
+use crate::heap::emit_free;
 use crate::procedures::LustFn;
 use crate::Expr;
 use crate::PreorderStatus;
@@ -46,24 +47,42 @@ pub(crate) fn emit_primitive<F>(
 where
     F: FnMut(&mut Context) -> Result<Value, String>,
 {
-    let word = jit.module.target_config().pointer_type();
+    let reftype = jit.reference_type();
+    let wordtype = jit.module.target_config().pointer_type();
 
     // Additional closure argument
-    jit.context.func.signature.params.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(reftype));
     // Additional arg count argument
-    jit.context.func.signature.params.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(reftype));
     // A pointer to where arguments are stored on the heap
-    jit.context.func.signature.params.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(reftype));
 
     // Return value
-    jit.context.func.signature.returns.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .returns
+        .push(AbiParam::new(reftype));
 
     let builder = FunctionBuilder::new(&mut jit.context.func, &mut jit.builder_context);
 
     let mut ctx = Context::new(
         builder,
         &mut jit.module,
-        word,
+        reftype,
+        wordtype,
         HashMap::new(),
         HashMap::new(),
         Vec::new(),
@@ -74,8 +93,13 @@ where
     ctx.builder
         .append_block_params_for_function_params(entry_block);
     ctx.builder.switch_to_block(entry_block);
+    ctx.builder.seal_block(entry_block);
 
     let res = body_builder(&mut ctx)?;
+    let res = ctx.builder.ins().raw_bitcast(ctx.reftype, res);
+
+    let argloc = ctx.builder.block_params(entry_block)[2];
+    emit_free(argloc, &mut ctx)?;
 
     ctx.builder.ins().return_(&[res]);
 
@@ -89,11 +113,18 @@ where
             cranelift_module::Linkage::Export,
             &jit.context.func.signature,
         )
-        .map_err(|e| e.to_string())?;
+        .unwrap();
 
     jit.module
-        .define_function(id, &mut jit.context, &mut NullTrapSink {})
-        .map_err(|e| e.to_string())?;
+        .define_function(
+            id,
+            &mut jit.context,
+            &mut NullTrapSink {},
+            &mut cranelift_codegen::binemit::NullStackMapSink {},
+        )
+        .unwrap();
+
+    // println!("{}", jit.context.func.display(jit.module.isa()));
 
     jit.module.clear_context(&mut jit.context);
 
@@ -145,10 +176,10 @@ fn get_primitive_args(ctx: &mut Context, block: Block, arity: usize) -> Vec<Valu
     (0..arity)
         .map(|i| {
             ctx.builder.ins().load(
-                ctx.word,
+                ctx.reftype,
                 MemFlags::new(),
                 argloc,
-                (i * ctx.word.bytes() as usize) as i32,
+                (i * ctx.reftype.bytes() as usize) as i32,
             )
         })
         .collect()
@@ -162,7 +193,7 @@ pub(crate) fn emit_primitives(
 
     let mut res = Vec::new();
 
-    let word = jit.module.target_config().pointer_type();
+    let wordtype = jit.module.target_config().pointer_type();
 
     if higher_order_primitives.contains("add1") {
         res.push(emit_primitive("add1", 1, jit, |ctx| {
@@ -174,12 +205,12 @@ pub(crate) fn emit_primitives(
             let args = get_primitive_args(ctx, block, 1);
             let accum = args[0];
 
-            fatal::emit_check_int(accum, ctx)?;
+            let accum = fatal::emit_check_int(accum, ctx)?;
 
             Ok(ctx
                 .builder
                 .ins()
-                .iadd_imm(accum, Expr::Integer(1).immediate_rep()))
+                .iadd_imm(accum, Expr::Integer(1).word_rep()))
         })?);
     }
 
@@ -192,8 +223,8 @@ pub(crate) fn emit_primitives(
             let accum = args[0];
 
             let mut sig = ctx.module.make_signature();
-            sig.params.push(AbiParam::new(ctx.word));
-            sig.returns.push(AbiParam::new(ctx.word));
+            sig.params.push(AbiParam::new(ctx.reftype));
+            sig.returns.push(AbiParam::new(ctx.reftype));
 
             let callee = ctx
                 .module
@@ -222,8 +253,8 @@ pub(crate) fn emit_primitives(
             let accum = args[0];
 
             let mut sig = ctx.module.make_signature();
-            sig.params.push(AbiParam::new(ctx.word));
-            sig.returns.push(AbiParam::new(ctx.word));
+            sig.params.push(AbiParam::new(ctx.reftype));
+            sig.returns.push(AbiParam::new(ctx.reftype));
 
             let callee = ctx
                 .module
@@ -255,7 +286,7 @@ pub(crate) fn emit_primitives(
             let args = get_primitive_args(ctx, block, 1);
             let accum = args[0];
 
-            fatal::emit_check_int(accum, ctx)?;
+            let accum = fatal::emit_check_int(accum, ctx)?;
 
             let accum = ctx.builder.ins().ishl_imm(accum, 6);
             let accum = ctx.builder.ins().bor_imm(accum, conversions::CHAR_TAG);
@@ -271,7 +302,7 @@ pub(crate) fn emit_primitives(
             let args = get_primitive_args(ctx, block, 1);
             let accum = args[0];
 
-            fatal::emit_check_char(accum, ctx)?;
+            let accum = fatal::emit_check_char(accum, ctx)?;
 
             let accum = ctx.builder.ins().ushr_imm(accum, 6);
             Ok(accum)
@@ -285,6 +316,7 @@ pub(crate) fn emit_primitives(
             emit_check_arg_count(1, args[1], ctx, false)?;
             let args = get_primitive_args(ctx, block, 1);
             let accum = args[0];
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum = ctx
                 .builder
@@ -292,7 +324,7 @@ pub(crate) fn emit_primitives(
                 .icmp_imm(IntCC::Equal, accum, conversions::NIL_VALUE);
             // The result of this comparason is a boolean value so we
             // need to convert it back to a ctx.word before working on it.
-            let accum = ctx.builder.ins().bint(word, accum);
+            let accum = ctx.builder.ins().bint(wordtype, accum);
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
     }
@@ -304,12 +336,13 @@ pub(crate) fn emit_primitives(
             emit_check_arg_count(1, args[1], ctx, false)?;
             let args = get_primitive_args(ctx, block, 1);
             let accum = args[0];
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum =
                 ctx.builder
                     .ins()
-                    .icmp_imm(IntCC::Equal, accum, Expr::Integer(0).immediate_rep());
-            let accum = ctx.builder.ins().bint(word, accum);
+                    .icmp_imm(IntCC::Equal, accum, Expr::Integer(0).word_rep());
+            let accum = ctx.builder.ins().bint(wordtype, accum);
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
     }
@@ -322,13 +355,13 @@ pub(crate) fn emit_primitives(
             let args = get_primitive_args(ctx, block, 1);
             let accum = args[0];
 
-            fatal::emit_check_bool(accum, ctx)?;
+            let accum = fatal::emit_check_bool(accum, ctx)?;
 
             // To get the not of a boolean, subtract one from it and
             // then take the absolute value.
             let accum = ctx.builder.ins().sshr_imm(accum, conversions::BOOL_SHIFT);
             let accum = ctx.builder.ins().icmp_imm(IntCC::Equal, accum, 0);
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            let accum = ctx.builder.ins().bint(ctx.reftype, accum);
 
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
@@ -341,13 +374,14 @@ pub(crate) fn emit_primitives(
             emit_check_arg_count(1, args[1], ctx, false)?;
             let args = get_primitive_args(ctx, block, 1);
             let accum = args[0];
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum = ctx.builder.ins().band_imm(accum, conversions::FIXNUM_MASK);
             let accum = ctx
                 .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::FIXNUM_TAG);
-            let accum = ctx.builder.ins().bint(word, accum);
+            let accum = ctx.builder.ins().bint(wordtype, accum);
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
     }
@@ -359,13 +393,14 @@ pub(crate) fn emit_primitives(
             emit_check_arg_count(1, args[1], ctx, false)?;
             let args = get_primitive_args(ctx, block, 1);
             let accum = args[0];
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum = ctx.builder.ins().band_imm(accum, conversions::BOOL_MASK);
             let accum = ctx
                 .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::BOOL_TAG);
-            let accum = ctx.builder.ins().bint(word, accum);
+            let accum = ctx.builder.ins().bint(wordtype, accum);
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
     }
@@ -377,6 +412,7 @@ pub(crate) fn emit_primitives(
             emit_check_arg_count(1, args[1], ctx, false)?;
             let args = get_primitive_args(ctx, block, 1);
             let accum = args[0];
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum = ctx
                 .builder
@@ -386,7 +422,7 @@ pub(crate) fn emit_primitives(
                 .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::PAIR_TAG);
-            let accum = ctx.builder.ins().bint(word, accum);
+            let accum = ctx.builder.ins().bint(wordtype, accum);
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
     }
@@ -398,6 +434,7 @@ pub(crate) fn emit_primitives(
             emit_check_arg_count(1, args[1], ctx, false)?;
             let args = get_primitive_args(ctx, block, 1);
             let accum = args[0];
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum = ctx
                 .builder
@@ -407,7 +444,7 @@ pub(crate) fn emit_primitives(
                 .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::CLOSURE_TAG);
-            let accum = ctx.builder.ins().bint(word, accum);
+            let accum = ctx.builder.ins().bint(wordtype, accum);
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
     }
@@ -422,8 +459,8 @@ pub(crate) fn emit_primitives(
             let left = args[0];
             let right = args[1];
 
-            fatal::emit_check_int(left, ctx)?;
-            fatal::emit_check_int(right, ctx)?;
+            let left = fatal::emit_check_int(left, ctx)?;
+            let right = fatal::emit_check_int(right, ctx)?;
 
             Ok(ctx.builder.ins().iadd(left, right))
         })?);
@@ -439,8 +476,8 @@ pub(crate) fn emit_primitives(
             let left = args[0];
             let right = args[1];
 
-            fatal::emit_check_int(left, ctx)?;
-            fatal::emit_check_int(right, ctx)?;
+            let left = fatal::emit_check_int(left, ctx)?;
+            let right = fatal::emit_check_int(right, ctx)?;
 
             let right = ctx.builder.ins().ineg(right);
 
@@ -458,8 +495,8 @@ pub(crate) fn emit_primitives(
             let left = args[0];
             let right = args[1];
 
-            fatal::emit_check_int(left, ctx)?;
-            fatal::emit_check_int(right, ctx)?;
+            let left = fatal::emit_check_int(left, ctx)?;
+            let right = fatal::emit_check_int(right, ctx)?;
 
             let accum = ctx.builder.ins().imul(left, right);
 
@@ -484,8 +521,11 @@ pub(crate) fn emit_primitives(
             let left = args[0];
             let right = args[1];
 
+            let left = ctx.builder.ins().raw_bitcast(ctx.wordtype, left);
+            let right = ctx.builder.ins().raw_bitcast(ctx.wordtype, right);
+
             let accum = ctx.builder.ins().icmp(IntCC::Equal, left, right);
-            let accum = ctx.builder.ins().bint(word, accum);
+            let accum = ctx.builder.ins().bint(wordtype, accum);
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
     }
@@ -500,11 +540,11 @@ pub(crate) fn emit_primitives(
             let left = args[0];
             let right = args[1];
 
-            fatal::emit_check_int(left, ctx)?;
-            fatal::emit_check_int(right, ctx)?;
+            let left = fatal::emit_check_int(left, ctx)?;
+            let right = fatal::emit_check_int(right, ctx)?;
 
             let accum = ctx.builder.ins().icmp(IntCC::SignedLessThan, left, right);
-            let accum = ctx.builder.ins().bint(word, accum);
+            let accum = ctx.builder.ins().bint(wordtype, accum);
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
     }
@@ -519,14 +559,14 @@ pub(crate) fn emit_primitives(
             let left = args[0];
             let right = args[1];
 
-            fatal::emit_check_int(left, ctx)?;
-            fatal::emit_check_int(right, ctx)?;
+            let left = fatal::emit_check_int(left, ctx)?;
+            let right = fatal::emit_check_int(right, ctx)?;
 
             let accum = ctx
                 .builder
                 .ins()
                 .icmp(IntCC::SignedGreaterThan, left, right);
-            let accum = ctx.builder.ins().bint(word, accum);
+            let accum = ctx.builder.ins().bint(wordtype, accum);
             Ok(emit_word_to_bool(accum, &mut ctx.builder))
         })?);
     }
@@ -541,13 +581,14 @@ pub(crate) fn emit_primitives(
             let data = args[0];
             let next = args[1];
 
-            let storage = emit_alloc((ctx.word.bytes() * 2).into(), ctx)?;
+            let storage = emit_alloc((ctx.reftype.bytes() * 2).into(), ctx)?;
 
             ctx.builder.ins().store(MemFlags::new(), data, storage, 0);
             ctx.builder
                 .ins()
-                .store(MemFlags::new(), next, storage, word.bytes() as i32);
+                .store(MemFlags::new(), next, storage, wordtype.bytes() as i32);
 
+            let storage = ctx.builder.ins().raw_bitcast(ctx.wordtype, storage);
             Ok(ctx.builder.ins().bor_imm(storage, conversions::PAIR_TAG))
         })?);
     }
@@ -561,11 +602,14 @@ pub(crate) fn emit_primitives(
             let args = get_primitive_args(ctx, block, 1);
             let pair = args[0];
 
-            fatal::emit_check_pair(pair, ctx)?;
+            let pair = fatal::emit_check_pair(pair, ctx)?;
 
             let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
 
-            Ok(ctx.builder.ins().load(word, MemFlags::new(), address, 0))
+            Ok(ctx
+                .builder
+                .ins()
+                .load(wordtype, MemFlags::new(), address, 0))
         })?);
     }
 
@@ -578,14 +622,14 @@ pub(crate) fn emit_primitives(
             let args = get_primitive_args(ctx, block, 1);
             let pair = args[0];
 
-            fatal::emit_check_pair(pair, ctx)?;
+            let pair = fatal::emit_check_pair(pair, ctx)?;
 
             let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
 
             Ok(ctx
                 .builder
                 .ins()
-                .load(word, MemFlags::new(), address, word.bytes() as i32))
+                .load(wordtype, MemFlags::new(), address, wordtype.bytes() as i32))
         })?);
     }
 
@@ -594,16 +638,19 @@ pub(crate) fn emit_primitives(
 
 pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Result<Value, String> {
     debug_assert!(string_is_primitive(name));
-    Ok(match name {
+
+    // Emit the code for the primitive. The result is a wordtype which
+    // we later cast back into a reftype.
+    let wordres = match name {
         "add1" => {
             check_arg_len("add1", args, 1)?;
             let accum = emit_expr(&args[0], ctx)?;
 
-            fatal::emit_check_int(accum, ctx)?;
+            let accum = fatal::emit_check_int(accum, ctx)?;
 
             ctx.builder
                 .ins()
-                .iadd_imm(accum, Expr::Integer(1).immediate_rep())
+                .iadd_imm(accum, Expr::Integer(1).word_rep())
         }
         "integer->char" => {
             check_arg_len("integer->char", args, 1)?;
@@ -612,7 +659,7 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             // and then tag it with the character tag.
             let accum = emit_expr(&args[0], ctx)?;
 
-            fatal::emit_check_int(accum, ctx)?;
+            let accum = fatal::emit_check_int(accum, ctx)?;
 
             let accum = ctx.builder.ins().ishl_imm(accum, 6);
             let accum = ctx.builder.ins().bor_imm(accum, conversions::CHAR_TAG);
@@ -629,7 +676,7 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             // there is no need to tag after the right shift.
             let accum = emit_expr(&args[0], ctx)?;
 
-            fatal::emit_check_char(accum, ctx)?;
+            let accum = fatal::emit_check_char(accum, ctx)?;
 
             let accum = ctx.builder.ins().ushr_imm(accum, 6);
             accum
@@ -637,25 +684,27 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
         "null?" => {
             check_arg_len("null?", args, 1)?;
             let accum = emit_expr(&args[0], ctx)?;
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
             let accum = ctx
                 .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::NIL_VALUE);
             // The result of this comparason is a boolean value so we
             // need to convert it back to a ctx.word before working on it.
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            let accum = ctx.builder.ins().bint(ctx.wordtype, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
         "zero?" => {
             check_arg_len("zero?", args, 1)?;
 
             let accum = emit_expr(&args[0], ctx)?;
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum =
                 ctx.builder
                     .ins()
-                    .icmp_imm(IntCC::Equal, accum, Expr::Integer(0).immediate_rep());
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+                    .icmp_imm(IntCC::Equal, accum, Expr::Integer(0).word_rep());
+            let accum = ctx.builder.ins().bint(ctx.wordtype, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
         "not" => {
@@ -663,45 +712,48 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
 
             let accum = emit_expr(&args[0], ctx)?;
 
-            fatal::emit_check_bool(accum, ctx)?;
+            let accum = fatal::emit_check_bool(accum, ctx)?;
 
             // To get the not of a boolean, subtract one from it and
             // then take the absolute value.
             let accum = ctx.builder.ins().sshr_imm(accum, conversions::BOOL_SHIFT);
             let accum = ctx.builder.ins().icmp_imm(IntCC::Equal, accum, 0);
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            let accum = ctx.builder.ins().bint(ctx.wordtype, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
         "integer?" => {
             check_arg_len("integer?", args, 1)?;
 
             let accum = emit_expr(&args[0], ctx)?;
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum = ctx.builder.ins().band_imm(accum, conversions::FIXNUM_MASK);
             let accum = ctx
                 .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::FIXNUM_TAG);
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            let accum = ctx.builder.ins().bint(ctx.wordtype, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
         "boolean?" => {
             check_arg_len("boolean?", args, 1)?;
 
             let accum = emit_expr(&args[0], ctx)?;
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum = ctx.builder.ins().band_imm(accum, conversions::BOOL_MASK);
             let accum = ctx
                 .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::BOOL_TAG);
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            let accum = ctx.builder.ins().bint(ctx.wordtype, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
         "pair?" => {
             check_arg_len("pair?", args, 1)?;
 
             let accum = emit_expr(&args[0], ctx)?;
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum = ctx
                 .builder
@@ -711,13 +763,14 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
                 .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::PAIR_TAG);
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            let accum = ctx.builder.ins().bint(ctx.wordtype, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
         "closure?" => {
             check_arg_len("closure?", args, 1)?;
 
             let accum = emit_expr(&args[0], ctx)?;
+            let accum = ctx.builder.ins().raw_bitcast(ctx.wordtype, accum);
 
             let accum = ctx
                 .builder
@@ -727,7 +780,7 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
                 .builder
                 .ins()
                 .icmp_imm(IntCC::Equal, accum, conversions::CLOSURE_TAG);
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            let accum = ctx.builder.ins().bint(ctx.wordtype, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
         "add" => {
@@ -736,8 +789,8 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
 
-            fatal::emit_check_int(left, ctx)?;
-            fatal::emit_check_int(right, ctx)?;
+            let left = fatal::emit_check_int(left, ctx)?;
+            let right = fatal::emit_check_int(right, ctx)?;
 
             ctx.builder.ins().iadd(left, right)
         }
@@ -747,8 +800,8 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
 
-            fatal::emit_check_int(left, ctx)?;
-            fatal::emit_check_int(right, ctx)?;
+            let left = fatal::emit_check_int(left, ctx)?;
+            let right = fatal::emit_check_int(right, ctx)?;
 
             let right = ctx.builder.ins().ineg(right);
 
@@ -760,8 +813,8 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
 
-            fatal::emit_check_int(left, ctx)?;
-            fatal::emit_check_int(right, ctx)?;
+            let left = fatal::emit_check_int(left, ctx)?;
+            let right = fatal::emit_check_int(right, ctx)?;
 
             let accum = ctx.builder.ins().imul(left, right);
 
@@ -780,8 +833,11 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
 
+            let left = ctx.builder.ins().raw_bitcast(ctx.wordtype, left);
+            let right = ctx.builder.ins().raw_bitcast(ctx.wordtype, right);
+
             let accum = ctx.builder.ins().icmp(IntCC::Equal, left, right);
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            let accum = ctx.builder.ins().bint(ctx.wordtype, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
         "lt" => {
@@ -789,11 +845,11 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
 
-            fatal::emit_check_int(left, ctx)?;
-            fatal::emit_check_int(right, ctx)?;
+            let left = fatal::emit_check_int(left, ctx)?;
+            let right = fatal::emit_check_int(right, ctx)?;
 
             let accum = ctx.builder.ins().icmp(IntCC::SignedLessThan, left, right);
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            let accum = ctx.builder.ins().bint(ctx.wordtype, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
         "gt" => {
@@ -801,14 +857,14 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let left = emit_expr(&args[0], ctx)?;
             let right = emit_expr(&args[1], ctx)?;
 
-            fatal::emit_check_int(left, ctx)?;
-            fatal::emit_check_int(right, ctx)?;
+            let left = fatal::emit_check_int(left, ctx)?;
+            let right = fatal::emit_check_int(right, ctx)?;
 
             let accum = ctx
                 .builder
                 .ins()
                 .icmp(IntCC::SignedGreaterThan, left, right);
-            let accum = ctx.builder.ins().bint(ctx.word, accum);
+            let accum = ctx.builder.ins().bint(ctx.wordtype, accum);
             emit_word_to_bool(accum, &mut ctx.builder)
         }
 
@@ -818,13 +874,14 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let data = emit_expr(&args[0], ctx)?;
             let next = emit_expr(&args[1], ctx)?;
 
-            let storage = emit_alloc((ctx.word.bytes() * 2).into(), ctx)?;
+            let storage = emit_alloc((ctx.reftype.bytes() * 2).into(), ctx)?;
 
             ctx.builder.ins().store(MemFlags::new(), data, storage, 0);
             ctx.builder
                 .ins()
-                .store(MemFlags::new(), next, storage, ctx.word.bytes() as i32);
+                .store(MemFlags::new(), next, storage, ctx.reftype.bytes() as i32);
 
+            let storage = ctx.builder.ins().raw_bitcast(ctx.wordtype, storage);
             ctx.builder.ins().bor_imm(storage, conversions::PAIR_TAG)
         }
         "car" => {
@@ -832,26 +889,29 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
 
             let pair = emit_expr(&args[0], ctx)?;
 
-            fatal::emit_check_pair(pair, ctx)?;
+            let pair = fatal::emit_check_pair(pair, ctx)?;
 
             let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
 
             ctx.builder
                 .ins()
-                .load(ctx.word, MemFlags::new(), address, 0)
+                .load(ctx.reftype, MemFlags::new(), address, 0)
         }
         "cdr" => {
             check_arg_len("cdr", args, 1)?;
 
             let pair = emit_expr(&args[0], ctx)?;
 
-            fatal::emit_check_pair(pair, ctx)?;
+            let pair = fatal::emit_check_pair(pair, ctx)?;
 
             let address = ctx.builder.ins().band_imm(pair, conversions::HEAP_PTR_MASK);
 
-            ctx.builder
-                .ins()
-                .load(ctx.word, MemFlags::new(), address, ctx.word.bytes() as i32)
+            ctx.builder.ins().load(
+                ctx.reftype,
+                MemFlags::new(),
+                address,
+                ctx.reftype.bytes() as i32,
+            )
         }
 
         "print" => {
@@ -860,8 +920,8 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let args = vec![arg];
 
             let mut sig = ctx.module.make_signature();
-            sig.params.push(AbiParam::new(ctx.word));
-            sig.returns.push(AbiParam::new(ctx.word));
+            sig.params.push(AbiParam::new(ctx.reftype));
+            sig.returns.push(AbiParam::new(ctx.reftype));
 
             let callee = ctx
                 .module
@@ -882,8 +942,8 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
             let args = vec![arg];
 
             let mut sig = ctx.module.make_signature();
-            sig.params.push(AbiParam::new(ctx.word));
-            sig.returns.push(AbiParam::new(ctx.word));
+            sig.params.push(AbiParam::new(ctx.reftype));
+            sig.returns.push(AbiParam::new(ctx.reftype));
 
             let callee = ctx
                 .module
@@ -903,7 +963,9 @@ pub(crate) fn emit_primcall(name: &str, args: &[Expr], ctx: &mut Context) -> Res
         }
 
         _ => panic!("non primitive in emit_primcall: {}", name),
-    })
+    };
+    // Cast the result back into a reference type
+    Ok(ctx.builder.ins().raw_bitcast(ctx.reftype, wordres))
 }
 
 fn emit_word_to_bool(accum: Value, builder: &mut FunctionBuilder) -> Value {
@@ -965,14 +1027,14 @@ pub(crate) fn emit_contigous_to_list(
     ptr: Value,
     len: Value,
 ) -> Result<Value, String> {
-    let word = ctx.module.target_config().pointer_type();
+    let reftype = ctx.reftype;
 
     let mut sig = ctx.module.make_signature();
 
-    sig.params.push(AbiParam::new(word));
-    sig.params.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(reftype));
+    sig.params.push(AbiParam::new(reftype));
 
-    sig.returns.push(AbiParam::new(word));
+    sig.returns.push(AbiParam::new(reftype));
 
     let callee = ctx
         .module
@@ -1001,14 +1063,27 @@ pub(crate) fn define_contiguous_to_list(
     jit: &mut JIT,
     unwind_context: &mut crate::debug::UnwindContext,
 ) -> Result<(), String> {
-    let word = jit.module.target_config().pointer_type();
+    let reftype = jit.reference_type();
+    let wordtype = jit.module.target_config().pointer_type();
 
     // A pointer to the beginning of the contiguous memory
-    jit.context.func.signature.params.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(reftype));
     // The length of the contiguous memory.
-    jit.context.func.signature.params.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(reftype));
     // A pointer to the new list
-    jit.context.func.signature.returns.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .returns
+        .push(AbiParam::new(reftype));
 
     let mut builder = FunctionBuilder::new(&mut jit.context.func, &mut jit.builder_context);
     let entry_block = builder.create_block();
@@ -1019,6 +1094,7 @@ pub(crate) fn define_contiguous_to_list(
     let ptr = builder.block_params(entry_block)[0];
     let len = builder.block_params(entry_block)[1];
 
+    let len = builder.ins().raw_bitcast(wordtype, len);
     let cond = builder.ins().icmp_imm(IntCC::Equal, len, 0);
 
     let done_block = builder.create_block();
@@ -1031,7 +1107,11 @@ pub(crate) fn define_contiguous_to_list(
     builder.switch_to_block(done_block);
     builder.seal_block(done_block);
 
-    let nil = builder.ins().iconst(word, Expr::Nil.immediate_rep());
+    let nil = Expr::Nil.ctxless_immediate_rep(
+        &mut builder,
+        jit.module.target_config().pointer_type(),
+        reftype,
+    );
     builder.ins().return_(&[nil]);
 
     builder.switch_to_block(more_block);
@@ -1039,8 +1119,8 @@ pub(crate) fn define_contiguous_to_list(
 
     // Make a call to alloc to get some storage
     let mut sig = jit.module.make_signature();
-    sig.params.push(AbiParam::new(word));
-    sig.returns.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(wordtype));
+    sig.returns.push(AbiParam::new(reftype));
 
     let callee = jit
         .module
@@ -1048,18 +1128,18 @@ pub(crate) fn define_contiguous_to_list(
         .map_err(|e| e.to_string())?;
 
     let local_callee = jit.module.declare_func_in_func(callee, &mut builder.func);
-    let size = builder.ins().iconst(word, 2);
+    let size = builder.ins().iconst(wordtype, 2);
     let args = vec![size];
     let call = builder.ins().call(local_callee, &args);
 
     let storage = builder.inst_results(call)[0];
-    let data = builder.ins().load(word, MemFlags::new(), ptr, 0);
+    let data = builder.ins().load(reftype, MemFlags::new(), ptr, 0);
 
     // Make a call to ourselves to get the rest.
     let mut sig = jit.module.make_signature();
-    sig.params.push(AbiParam::new(word));
-    sig.params.push(AbiParam::new(word));
-    sig.returns.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(reftype));
+    sig.params.push(AbiParam::new(reftype));
+    sig.returns.push(AbiParam::new(reftype));
 
     let callee = jit
         .module
@@ -1072,8 +1152,15 @@ pub(crate) fn define_contiguous_to_list(
 
     let local_callee = jit.module.declare_func_in_func(callee, &mut builder.func);
 
-    let new_ptr = builder.ins().iadd_imm(ptr, word.bytes() as i64);
-    let new_len = builder.ins().iadd_imm(len, -1);
+    // Cast to a word, add one, and then cast back to a pointer to
+    // point to the next item in the contigous list.
+    let ptr_word = builder.ins().raw_bitcast(wordtype, ptr);
+    let new_ptr = builder.ins().iadd_imm(ptr_word, reftype.bytes() as i64);
+    let new_ptr = builder.ins().raw_bitcast(reftype, new_ptr);
+
+    let len_word = builder.ins().raw_bitcast(wordtype, len);
+    let new_len = builder.ins().iadd_imm(len_word, -1);
+    let new_len = builder.ins().raw_bitcast(reftype, new_len);
 
     let args = vec![new_ptr, new_len];
     let call = builder.ins().call(local_callee, &args);
@@ -1083,9 +1170,12 @@ pub(crate) fn define_contiguous_to_list(
     builder.ins().store(MemFlags::new(), data, storage, 0);
     builder
         .ins()
-        .store(MemFlags::new(), next, storage, word.bytes() as i32);
+        .store(MemFlags::new(), next, storage, reftype.bytes() as i32);
 
-    let res = builder.ins().bor_imm(storage, conversions::PAIR_TAG);
+    let storage_word = builder.ins().raw_bitcast(wordtype, storage);
+    let res = builder.ins().bor_imm(storage_word, conversions::PAIR_TAG);
+    let res = builder.ins().raw_bitcast(reftype, res);
+
     builder.ins().return_(&[res]);
 
     builder.seal_all_blocks();
@@ -1098,11 +1188,16 @@ pub(crate) fn define_contiguous_to_list(
             cranelift_module::Linkage::Export,
             &jit.context.func.signature,
         )
-        .map_err(|e| e.to_string())?;
+        .unwrap();
 
     jit.module
-        .define_function(id, &mut jit.context, &mut NullTrapSink {})
-        .map_err(|e| e.to_string())?;
+        .define_function(
+            id,
+            &mut jit.context,
+            &mut NullTrapSink {},
+            &mut cranelift_codegen::binemit::NullStackMapSink {},
+        )
+        .unwrap();
 
     unwind_context.add_function(id, &jit.context, jit.module.isa())?;
 
@@ -1418,7 +1513,7 @@ mod tests {
             Expr::List(vec![
                 Expr::Symbol("cons".to_string()),
                 Expr::Integer(-1),
-                Expr::Integer(2),
+                Expr::Integer(1),
             ]),
         ]);
 

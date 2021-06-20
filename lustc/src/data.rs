@@ -19,7 +19,7 @@ impl Expr {
             Expr::List(v) => {
                 if let Some(Expr::Symbol(s)) = v.first() {
                     if s == "quote" && v.len() == 2 {
-                        Some(v[1].immediate_rep())
+                        Some(v[1].word_rep())
                     } else {
                         None
                     }
@@ -27,7 +27,7 @@ impl Expr {
                     None
                 }
             }
-            Expr::String(_) => Some(self.immediate_rep()),
+            Expr::String(_) => Some(self.word_rep()),
             _ => None,
         }
     }
@@ -97,11 +97,11 @@ pub(crate) fn emit_data_access(name: &str, ctx: &mut Context) -> Result<Value, S
         .map_err(|e| e.to_string())?;
     let local_id = ctx.module.declare_data_in_func(sym, ctx.builder.func);
 
-    let data_ptr = ctx.builder.ins().symbol_value(ctx.word, local_id);
+    let data_ptr = ctx.builder.ins().symbol_value(ctx.wordtype, local_id);
     Ok(ctx
         .builder
         .ins()
-        .load(ctx.word, MemFlags::new(), data_ptr, 0))
+        .load(ctx.reftype, MemFlags::new(), data_ptr, 0))
 }
 
 /// Replaces all of the complex constants in the program with a symbol

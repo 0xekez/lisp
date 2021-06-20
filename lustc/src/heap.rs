@@ -17,13 +17,22 @@ pub fn define_alloc(
     unwind_context: &mut crate::debug::UnwindContext,
 ) -> Result<(), String> {
     let _t = crate::timer::timeit("emit alloc");
-    let word = jit.module.target_config().pointer_type();
+    let reftype = jit.reference_type();
+    let wordtype = jit.module.target_config().pointer_type();
 
     // Take a size in bytes to allocate
-    jit.context.func.signature.params.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(wordtype));
 
     // Return a pointer to the allocated bytes
-    jit.context.func.signature.returns.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .returns
+        .push(AbiParam::new(reftype));
 
     let mut builder = FunctionBuilder::new(&mut jit.context.func, &mut jit.builder_context);
     let entry_block = builder.create_block();
@@ -34,8 +43,8 @@ pub fn define_alloc(
     // Make a call to malloc:
     let mut sig = jit.module.make_signature();
 
-    sig.params.push(AbiParam::new(word));
-    sig.returns.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(wordtype));
+    sig.returns.push(AbiParam::new(reftype));
 
     let callee = jit
         .module
@@ -49,10 +58,11 @@ pub fn define_alloc(
 
     let call = builder.ins().call(local_callee, &args);
     let res = builder.inst_results(call)[0];
+    let res = builder.ins().raw_bitcast(reftype, res);
 
     // Trigger the garbage collector
     let mut sig = jit.module.make_signature();
-    sig.params.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(wordtype));
 
     let callee = jit
         .module
@@ -75,11 +85,16 @@ pub fn define_alloc(
             cranelift_module::Linkage::Export,
             &jit.context.func.signature,
         )
-        .map_err(|e| e.to_string())?;
+        .unwrap();
 
     jit.module
-        .define_function(id, &mut jit.context, &mut NullTrapSink {})
-        .map_err(|e| e.to_string())?;
+        .define_function(
+            id,
+            &mut jit.context,
+            &mut NullTrapSink {},
+            &mut cranelift_codegen::binemit::NullStackMapSink {},
+        )
+        .unwrap();
 
     unwind_context.add_function(id, &jit.context, jit.module.isa())?;
 
@@ -89,12 +104,13 @@ pub fn define_alloc(
 }
 
 pub(crate) fn emit_alloc(size: i64, ctx: &mut crate::compiler::Context) -> Result<Value, String> {
-    let word = ctx.module.target_config().pointer_type();
+    let reftype = ctx.reftype;
+    let wordtype = ctx.wordtype;
 
     let mut sig = ctx.module.make_signature();
 
-    sig.params.push(AbiParam::new(word));
-    sig.returns.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(wordtype));
+    sig.returns.push(AbiParam::new(reftype));
 
     let callee = ctx
         .module
@@ -105,7 +121,7 @@ pub(crate) fn emit_alloc(size: i64, ctx: &mut crate::compiler::Context) -> Resul
         .module
         .declare_func_in_func(callee, &mut ctx.builder.func);
 
-    let size = ctx.builder.ins().iconst(word, size);
+    let size = ctx.builder.ins().iconst(wordtype, size);
     let args = vec![size];
 
     let call = ctx.builder.ins().call(local_callee, &args);
@@ -115,10 +131,8 @@ pub(crate) fn emit_alloc(size: i64, ctx: &mut crate::compiler::Context) -> Resul
 }
 
 pub(crate) fn emit_free(what: Value, ctx: &mut crate::compiler::Context) -> Result<(), String> {
-    let word = ctx.word;
-
     let mut sig = ctx.module.make_signature();
-    sig.params.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(ctx.reftype));
 
     let callee = ctx
         .module

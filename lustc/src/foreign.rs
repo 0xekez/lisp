@@ -45,9 +45,9 @@ pub(crate) fn emit_foreign_call(
     let mut sig = ctx.module.make_signature();
 
     for _ in args {
-        sig.params.push(AbiParam::new(ctx.word));
+        sig.params.push(AbiParam::new(ctx.wordtype));
     }
-    sig.returns.push(AbiParam::new(ctx.word));
+    sig.returns.push(AbiParam::new(ctx.wordtype));
 
     let callee = ctx
         .module
@@ -92,6 +92,7 @@ pub(crate) fn emit_is_heap(val: Value, ctx: &mut Context) -> Value {
 /// elegible for use as an argument for a foreign function.
 pub(crate) fn emit_untag(expr: &Expr, ctx: &mut Context) -> Result<Value, String> {
     let the_val = emit_expr(expr, ctx)?;
+    let the_val = ctx.builder.ins().raw_bitcast(ctx.wordtype, the_val);
 
     let fixnum_block = ctx.builder.create_block();
     let bool_block = ctx.builder.create_block();
@@ -103,11 +104,11 @@ pub(crate) fn emit_untag(expr: &Expr, ctx: &mut Context) -> Result<Value, String
 
     // Merge block takes an argument which is the amount of right
     // shifting to do.
-    ctx.builder.append_block_param(shift_block, ctx.word);
-    ctx.builder.append_block_param(return_block, ctx.word);
+    ctx.builder.append_block_param(shift_block, ctx.wordtype);
+    ctx.builder.append_block_param(return_block, ctx.wordtype);
 
     let is_char = emit_is(the_val, CHAR_TAG, CHAR_MASK, ctx);
-    let char_shift = ctx.builder.ins().iconst(ctx.word, CHAR_SHIFT);
+    let char_shift = ctx.builder.ins().iconst(ctx.wordtype, CHAR_SHIFT);
 
     ctx.builder.ins().brnz(is_char, shift_block, &[char_shift]);
     ctx.builder.ins().jump(fixnum_block, &[]);
@@ -116,7 +117,7 @@ pub(crate) fn emit_untag(expr: &Expr, ctx: &mut Context) -> Result<Value, String
     ctx.builder.seal_block(fixnum_block);
 
     let is_fixnum = emit_is(the_val, FIXNUM_TAG, FIXNUM_MASK, ctx);
-    let fixnum_shift = ctx.builder.ins().iconst(ctx.word, FIXNUM_SHIFT);
+    let fixnum_shift = ctx.builder.ins().iconst(ctx.wordtype, FIXNUM_SHIFT);
 
     ctx.builder
         .ins()
@@ -127,7 +128,7 @@ pub(crate) fn emit_untag(expr: &Expr, ctx: &mut Context) -> Result<Value, String
     ctx.builder.seal_block(bool_block);
 
     let is_bool = emit_is(the_val, BOOL_TAG, BOOL_MASK, ctx);
-    let bool_shift = ctx.builder.ins().iconst(ctx.word, BOOL_SHIFT);
+    let bool_shift = ctx.builder.ins().iconst(ctx.wordtype, BOOL_SHIFT);
 
     ctx.builder.ins().brnz(is_bool, shift_block, &[bool_shift]);
     ctx.builder.ins().jump(nil_block, &[]);
@@ -137,7 +138,10 @@ pub(crate) fn emit_untag(expr: &Expr, ctx: &mut Context) -> Result<Value, String
 
     let is_nil = ctx.builder.ins().icmp_imm(IntCC::Equal, the_val, NIL_VALUE);
     // Nil goes to zero in c land
-    let nil_shift = ctx.builder.ins().iconst(ctx.word, ctx.word.bytes() as i64);
+    let nil_shift = ctx
+        .builder
+        .ins()
+        .iconst(ctx.wordtype, ctx.reftype.bytes() as i64);
 
     ctx.builder.ins().brnz(is_nil, shift_block, &[nil_shift]);
     ctx.builder.ins().jump(heap_block, &[]);
@@ -146,7 +150,7 @@ pub(crate) fn emit_untag(expr: &Expr, ctx: &mut Context) -> Result<Value, String
     ctx.builder.seal_block(heap_block);
 
     let is_heap = emit_is_heap(the_val, ctx);
-    let zero = ctx.builder.ins().iconst(ctx.word, 0);
+    let zero = ctx.builder.ins().iconst(ctx.wordtype, 0);
 
     ctx.builder.ins().brnz(is_heap, heap_convert, &[]);
     ctx.builder.ins().jump(shift_block, &[zero]);

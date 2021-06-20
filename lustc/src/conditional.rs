@@ -30,10 +30,11 @@ pub(crate) fn emit_conditional(
     ctx: &mut Context,
 ) -> Result<Value, String> {
     let cond = emit_expr(cond, ctx)?;
+    let cond = ctx.builder.ins().raw_bitcast(ctx.wordtype, cond);
     let cond = ctx
         .builder
         .ins()
-        .icmp_imm(IntCC::Equal, cond, Expr::Bool(true).immediate_rep());
+        .icmp_imm(IntCC::Equal, cond, Expr::Bool(true).word_rep());
 
     let then_block = ctx.builder.create_block();
     let else_block = ctx.builder.create_block();
@@ -42,7 +43,7 @@ pub(crate) fn emit_conditional(
     // Our if-else blocks have a return value. Cranelift has no PHI
     // form so instead of using a PHI we use a merge block that each
     // of the then and else blocks jump to with their return value.
-    ctx.builder.append_block_param(merge_block, ctx.word);
+    ctx.builder.append_block_param(merge_block, ctx.reftype);
 
     // On false, jump to the else block.
     ctx.builder.ins().brz(cond, else_block, &[]);

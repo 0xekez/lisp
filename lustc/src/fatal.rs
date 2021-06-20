@@ -69,7 +69,8 @@ pub(crate) fn emit_check_tag(
     tag: Word,
     mask: Word,
     ctx: &mut Context,
-) -> Result<(), String> {
+) -> Result<Value, String> {
+    let query = ctx.builder.ins().raw_bitcast(ctx.wordtype, query);
     let tag_val = ctx.builder.ins().band_imm(query, mask);
     let is_tag = ctx.builder.ins().icmp_imm(IntCC::Equal, tag_val, tag);
 
@@ -93,10 +94,10 @@ pub(crate) fn emit_check_tag(
     ctx.builder.switch_to_block(ok_block);
     ctx.builder.seal_block(ok_block);
 
-    Ok(())
+    Ok(query)
 }
 
-pub(crate) fn emit_check_int(query: Value, ctx: &mut Context) -> Result<(), String> {
+pub(crate) fn emit_check_int(query: Value, ctx: &mut Context) -> Result<Value, String> {
     emit_check_tag(
         query,
         conversions::FIXNUM_TAG,
@@ -105,15 +106,15 @@ pub(crate) fn emit_check_int(query: Value, ctx: &mut Context) -> Result<(), Stri
     )
 }
 
-pub(crate) fn emit_check_char(query: Value, ctx: &mut Context) -> Result<(), String> {
+pub(crate) fn emit_check_char(query: Value, ctx: &mut Context) -> Result<Value, String> {
     emit_check_tag(query, conversions::CHAR_TAG, conversions::CHAR_MASK, ctx)
 }
 
-pub(crate) fn emit_check_bool(query: Value, ctx: &mut Context) -> Result<(), String> {
+pub(crate) fn emit_check_bool(query: Value, ctx: &mut Context) -> Result<Value, String> {
     emit_check_tag(query, conversions::BOOL_TAG, conversions::BOOL_MASK, ctx)
 }
 
-pub(crate) fn emit_check_pair(query: Value, ctx: &mut Context) -> Result<(), String> {
+pub(crate) fn emit_check_pair(query: Value, ctx: &mut Context) -> Result<Value, String> {
     emit_check_tag(
         query,
         conversions::PAIR_TAG,
@@ -124,6 +125,7 @@ pub(crate) fn emit_check_pair(query: Value, ctx: &mut Context) -> Result<(), Str
 
 pub(crate) fn emit_check_callable(query: &Expr, ctx: &mut Context) -> Result<Value, String> {
     let closure_ptr = compiler::emit_expr(query, ctx)?;
+    let closure_ptr = ctx.builder.ins().raw_bitcast(ctx.wordtype, closure_ptr);
     let tag = ctx
         .builder
         .ins()
@@ -164,6 +166,7 @@ pub(crate) fn emit_check_arg_count(
     ctx: &mut Context,
     is_varadic: bool,
 ) -> Result<(), String> {
+    let actual = ctx.builder.ins().raw_bitcast(ctx.wordtype, actual);
     // If the function is varadic wrong number of arguments only if
     // there are less than the number of regular params.
     let cond = if is_varadic {

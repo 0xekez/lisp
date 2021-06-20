@@ -32,7 +32,9 @@ pub extern "C" fn do_gc(amount: crate::Word) {
     }
     // Trigger garbage collection if we're using over our gc threshold.
     // memory.
-    if unsafe { true || ALLOC_AMOUNT > GC_THRESHOLD } {
+
+    // FIXME: illegal instruction errors when triggered
+    if unsafe { false && ALLOC_AMOUNT > GC_THRESHOLD } {
         println!("GC!");
         backtrace::trace(|frame| {
             let sp = frame.sp();
@@ -58,7 +60,7 @@ pub extern "C" fn do_gc(amount: crate::Word) {
                 if id == 0xBA5EBA11 {
                     let id = unsafe { *(sp.offset(-offset + 8) as *const i64) };
                     let registry = SM_REGISTRY.lock().unwrap();
-                    let (escaped, local) = &registry[id as usize];
+                    let (_escaped, local) = &registry[id as usize];
                     for offset in local {
                         let offset = (*offset * 8) as isize;
                         let val = unsafe { *(sp.offset(offset) as *const i64) };

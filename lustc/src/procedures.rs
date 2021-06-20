@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::compiler::{emit_expr, JIT};
-use crate::gc;
 use crate::heap::{emit_alloc, emit_free};
 use crate::locals::emit_var_decl_and_assign;
 use crate::primitives::emit_contigous_to_list;
@@ -80,20 +79,37 @@ pub fn emit_procedure(
     fnmap: &HashMap<String, LustFn>,
     unwind_context: &mut crate::debug::UnwindContext,
 ) -> Result<(), String> {
-    let word = jit.module.target_config().pointer_type();
+    let reftype = jit.reference_type();
+    let wordtype = jit.module.target_config().pointer_type();
 
     // Closure param
-    jit.context.func.signature.params.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(reftype));
 
     // Argument count param.
-    jit.context.func.signature.params.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(reftype));
 
     // Location of arguments on heap
-    jit.context.func.signature.params.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(reftype));
 
     // All lust functions return the result of evaluating their last
     // expression.
-    jit.context.func.signature.returns.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .returns
+        .push(AbiParam::new(reftype));
 
     let mut builder = FunctionBuilder::new(&mut jit.context.func, &mut jit.builder_context);
     let entry_block = builder.create_block();
@@ -107,7 +123,7 @@ pub fn emit_procedure(
     // function to it's StackMap.
     let id_slot = builder.func.create_stack_slot(StackSlotData::new(
         StackSlotKind::ExplicitSlot,
-        word.bytes() * 2,
+        reftype.bytes() * 2,
     ));
 
     // The function identifier is identified as a totem followed by
@@ -120,15 +136,18 @@ pub fn emit_procedure(
     // faith that having a local varaible with the same value as the
     // totem won't cause trouble as we'll stop looking once we find
     // the first totem.
-    let totem = builder.ins().iconst(word, 0xBA5EBA11);
+    let totem = builder.ins().iconst(wordtype, 0xBA5EBA11);
     builder.ins().stack_store(totem, id_slot, 0);
-    let id = builder.ins().iconst(word, fn_id);
-    builder.ins().stack_store(id, id_slot, word.bytes() as i32);
+    let id = builder.ins().iconst(wordtype, fn_id);
+    builder
+        .ins()
+        .stack_store(id, id_slot, reftype.bytes() as i32);
 
     let mut ctx = Context::new(
         builder,
         &mut jit.module,
-        word,
+        reftype,
+        wordtype,
         HashMap::new(),
         fnmap.clone(),
         Vec::new(),
@@ -149,16 +168,16 @@ pub fn emit_procedure(
     // Assign regular arguments
     for (i, p) in params.iter().enumerate() {
         let val = ctx.builder.ins().load(
-            word,
+            reftype,
             MemFlags::new(),
             argloc,
-            (i * word.bytes() as usize) as i32,
+            (i * reftype.bytes() as usize) as i32,
         );
 
         // Params that are escaped need to be initialized
         // appropriately.
         let val = if p.starts_with("e_") {
-            let location = emit_alloc(ctx.word.bytes().into(), &mut ctx)?;
+            let location = emit_alloc(ctx.reftype.bytes().into(), &mut ctx)?;
             ctx.builder.ins().store(MemFlags::new(), val, location, 0);
             ctx.local_collector.register_escaped(location);
             location
@@ -178,7 +197,7 @@ pub fn emit_procedure(
         let varadic_ptr = ctx
             .builder
             .ins()
-            .iadd_imm(argloc, (params.len() * word.bytes() as usize) as i64);
+            .iadd_imm(argloc, (params.len() * reftype.bytes() as usize) as i64);
         let varadic_val = emit_contigous_to_list(&mut ctx, varadic_ptr, varadic_len)?;
         ctx.local_collector.register_local(varadic_val);
         emit_var_decl_and_assign(sym, varadic_val, &mut ctx)?;
@@ -189,16 +208,18 @@ pub fn emit_procedure(
         .get(name)
         .map(|f| &f.free_variables)
         .ok_or(format!("internal error finding free vars for {}", name))?;
-    let word_size = ctx.word.bytes();
+    let word_size = ctx.reftype.bytes();
 
     for (i, free) in free_vars.iter().enumerate() {
         let offset = i + 1;
         let byte_offset = offset * (word_size as usize);
 
-        let val =
-            ctx.builder
-                .ins()
-                .load(ctx.word, MemFlags::new(), closure_ptr, byte_offset as i32);
+        let val = ctx.builder.ins().load(
+            ctx.reftype,
+            MemFlags::new(),
+            closure_ptr,
+            byte_offset as i32,
+        );
 
         ctx.local_collector.register_local(val);
         emit_var_decl_and_assign(free, val, &mut ctx)?;
@@ -221,19 +242,24 @@ pub fn emit_procedure(
     // Clean up
     ctx.builder.seal_all_blocks();
     ctx.builder.finalize();
-    let maps = ctx.local_collector.get_maps();
 
     let id = jit
         .module
         .declare_function(name, Linkage::Export, &jit.context.func.signature)
-        .map_err(|e| e.to_string())?;
+        .unwrap();
 
     jit.module
-        .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
-        .map_err(|e| e.to_string())?;
+        .define_function(
+            id,
+            &mut jit.context,
+            &mut codegen::binemit::NullTrapSink {},
+            &mut codegen::binemit::NullStackMapSink {},
+        )
+        .unwrap();
 
     unwind_context.add_function(id, &jit.context, jit.module.isa())?;
-    gc::register_stackmaps(fn_id, &jit.context.func, jit.module.isa(), maps);
+
+    // println!("{}", jit.context.func.display(jit.module.isa()));
 
     jit.module.clear_context(&mut jit.context);
 
@@ -245,23 +271,25 @@ pub fn emit_procedure(
 /// indirect one to the function pointed to by the argument variable.
 pub(crate) fn emit_fncall(head: &Expr, args: &[Expr], ctx: &mut Context) -> Result<Value, String> {
     let closure_ptr = emit_check_callable(head, ctx)?;
+    let closure_ptr = ctx.builder.ins().raw_bitcast(ctx.wordtype, closure_ptr);
 
-    let word = ctx.module.target_config().pointer_type();
+    let reftype = ctx.reftype;
+    let wordtype = ctx.wordtype;
 
     let mut sig = ctx.module.make_signature();
 
     // Argument which is a pointer to the closure
-    sig.params.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(reftype));
 
     // Argument that is the number of args being passed in. Used for
     // validating the number of arguments and varadic functions.
-    sig.params.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(reftype));
 
     // A pointer to where the arguments are stored on the heap.
-    sig.params.push(AbiParam::new(word));
+    sig.params.push(AbiParam::new(reftype));
 
     // We always return a single word
-    sig.returns.push(AbiParam::new(word));
+    sig.returns.push(AbiParam::new(reftype));
 
     // First argumnet is a pointer to the closure
     let closure_ptr = ctx
@@ -272,22 +300,25 @@ pub(crate) fn emit_fncall(head: &Expr, args: &[Expr], ctx: &mut Context) -> Resu
     let fn_ptr = ctx
         .builder
         .ins()
-        .load(ctx.word, MemFlags::new(), closure_ptr, 0);
+        .load(ctx.reftype, MemFlags::new(), closure_ptr, 0);
 
+    let closure_ptr = ctx.builder.ins().raw_bitcast(reftype, closure_ptr);
     let mut argsc = vec![closure_ptr];
 
     // Second argument is the number of arguments we're going to pass in.
-    argsc.push(ctx.builder.ins().iconst(word, args.len() as i64));
+    let arg_count = ctx.builder.ins().iconst(wordtype, args.len() as i64);
+    let arg_count = ctx.builder.ins().raw_bitcast(reftype, arg_count);
+    argsc.push(arg_count);
 
     // Allocate space for arguments and stash them away.
-    let argloc = emit_alloc((args.len() * word.bytes() as usize) as i64, ctx)?;
+    let argloc = emit_alloc((args.len() * reftype.bytes() as usize) as i64, ctx)?;
     for (i, arg) in args.iter().enumerate() {
         let val = emit_expr(arg, ctx)?;
         ctx.builder.ins().store(
             MemFlags::new(),
             val,
             argloc,
-            (i * word.bytes() as usize) as i32,
+            (i * reftype.bytes() as usize) as i32,
         );
     }
     // Pass the location of the arguments to the function
@@ -516,7 +547,7 @@ pub(crate) fn annotate_free_variables(f: &mut LustFn) {
 /// Emits code to allocate a closure and returns a pointer to it.
 fn emit_alloc_closure(var_count: usize, ctx: &mut Context) -> Result<Value, String> {
     // Free variables and the function pointer.
-    let size = (var_count + 1) * (ctx.word.bytes() as usize);
+    let size = (var_count + 1) * (ctx.reftype.bytes() as usize);
     emit_alloc(size as i64, ctx)
 }
 
@@ -546,15 +577,16 @@ pub(crate) fn emit_make_closure(
         .ins()
         .store(MemFlags::new(), fn_ptr, closure_ptr, 0);
 
-    let word_size = ctx.word.bytes();
+    let word_size = ctx.reftype.bytes();
 
     for (offset, free) in free_variables.iter().enumerate() {
         let val = if letstack_contains(ctx, free) {
+            let closure_ptr = ctx.builder.ins().raw_bitcast(ctx.wordtype, closure_ptr);
             let pointer = ctx
                 .builder
                 .ins()
                 .bor_imm(closure_ptr, crate::conversions::CLOSURE_TAG);
-            let location = emit_alloc(ctx.word.bytes().into(), ctx)?;
+            let location = emit_alloc(ctx.reftype.bytes().into(), ctx)?;
             ctx.builder
                 .ins()
                 .store(MemFlags::new(), pointer, location, 0);
@@ -582,22 +614,24 @@ pub(crate) fn emit_make_closure(
     }
 
     // Tag the closure pointer
-    Ok(ctx
+    let closure_ptr = ctx.builder.ins().raw_bitcast(ctx.wordtype, closure_ptr);
+    let tagged = ctx
         .builder
         .ins()
-        .bor_imm(closure_ptr, crate::conversions::CLOSURE_TAG))
+        .bor_imm(closure_ptr, crate::conversions::CLOSURE_TAG);
+    Ok(ctx.builder.ins().raw_bitcast(ctx.reftype, tagged))
 }
 
 pub(crate) fn emit_get_fn_addr(name: &str, ctx: &mut Context) -> Result<Value, String> {
     let mut sig = ctx.module.make_signature();
     // Clojure
-    sig.params.push(AbiParam::new(ctx.word));
+    sig.params.push(AbiParam::new(ctx.reftype));
     // Argument count
-    sig.params.push(AbiParam::new(ctx.word));
+    sig.params.push(AbiParam::new(ctx.reftype));
     // Heap location of arguments
-    sig.params.push(AbiParam::new(ctx.word));
+    sig.params.push(AbiParam::new(ctx.reftype));
 
-    sig.returns.push(AbiParam::new(ctx.word));
+    sig.returns.push(AbiParam::new(ctx.reftype));
 
     let callee = ctx
         .module
@@ -608,7 +642,7 @@ pub(crate) fn emit_get_fn_addr(name: &str, ctx: &mut Context) -> Result<Value, S
         .module
         .declare_func_in_func(callee, &mut ctx.builder.func);
 
-    Ok(ctx.builder.ins().func_addr(ctx.word, local_callee))
+    Ok(ctx.builder.ins().func_addr(ctx.reftype, local_callee))
 }
 
 #[cfg(test)]

@@ -18,7 +18,6 @@ use crate::debug;
 use crate::escape;
 use crate::fatal;
 use crate::foreign;
-use crate::gc;
 use crate::gc::{do_gc, LocalValueCollector};
 use crate::heap::define_alloc;
 use crate::locals;
@@ -58,7 +57,8 @@ pub struct JIT {
 pub(crate) struct Context<'a> {
     pub builder: FunctionBuilder<'a>,
     pub module: &'a mut JITModule,
-    pub word: types::Type,
+    pub reftype: types::Type,
+    pub wordtype: types::Type,
     pub env: HashMap<String, Variable>,
     pub fnmap: HashMap<String, LustFn>,
     pub local_collector: LocalValueCollector,
@@ -69,8 +69,26 @@ pub(crate) struct Context<'a> {
 }
 
 impl JIT {
-    pub fn new() -> (Self, debug::UnwindContext) {
-        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
+    fn make_builder() -> Result<JITBuilder, String> {
+        let mut flag_builder = cranelift_codegen::settings::builder();
+        // On at least AArch64, "colocated" calls use shorter-range relocations,
+        // which might not reach all definitions; we can't handle that here, so
+        // we require long-range relocation types.
+        flag_builder.set("use_colocated_libcalls", "false").unwrap();
+        flag_builder.set("is_pic", "true").unwrap();
+        flag_builder.set("enable_safepoints", "true").unwrap();
+        let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
+            panic!("host machine is not supported: {}", msg);
+        });
+        let isa = isa_builder.finish(settings::Flags::new(flag_builder));
+        Ok(JITBuilder::with_isa(
+            isa,
+            cranelift_module::default_libcall_names(),
+        ))
+    }
+
+    pub fn new() -> Result<(Self, debug::UnwindContext), String> {
+        let mut builder = Self::make_builder()?;
 
         // Register the print function.
         let print_addr = print_lustc_word as *const u8;
@@ -92,10 +110,19 @@ impl JIT {
 
         let mut unwind_context = debug::UnwindContext::new(jit.module.isa());
 
-        define_alloc(&mut jit, &mut unwind_context).unwrap();
-        define_contiguous_to_list(&mut jit, &mut unwind_context).unwrap();
-        crate::fatal::emit_error_strings(&mut jit).unwrap();
-        (jit, unwind_context)
+        define_alloc(&mut jit, &mut unwind_context)?;
+        define_contiguous_to_list(&mut jit, &mut unwind_context)?;
+        crate::fatal::emit_error_strings(&mut jit)?;
+        Ok((jit, unwind_context))
+    }
+
+    pub(crate) fn reference_type(&self) -> types::Type {
+        let pointer_type = self.module.target_config().pointer_type();
+        match pointer_type {
+            types::I32 => types::R32,
+            types::I64 => types::R64,
+            _ => panic!("unsupported pointer type: {}", pointer_type),
+        }
     }
 }
 
@@ -103,7 +130,8 @@ impl<'a> Context<'a> {
     pub fn new(
         builder: FunctionBuilder<'a>,
         module: &'a mut JITModule,
-        word: types::Type,
+        reftype: types::Type,
+        wordtype: types::Type,
         env: HashMap<String, Variable>,
         fnmap: HashMap<String, LustFn>,
         letstack: Vec<String>,
@@ -111,7 +139,8 @@ impl<'a> Context<'a> {
         Self {
             builder,
             module,
-            word,
+            reftype,
+            wordtype,
             env,
             fnmap,
             letstack,
@@ -123,10 +152,6 @@ impl<'a> Context<'a> {
 /// Emits the code for an expression using the given builder.
 pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String> {
     Ok(match expr {
-        Expr::Integer(_) => ctx.builder.ins().iconst(ctx.word, expr.immediate_rep()),
-        Expr::Char(_) => ctx.builder.ins().iconst(ctx.word, expr.immediate_rep()),
-        Expr::Bool(_) => ctx.builder.ins().iconst(ctx.word, expr.immediate_rep()),
-        Expr::Nil => ctx.builder.ins().iconst(ctx.word, expr.immediate_rep()),
         Expr::Symbol(name) => locals::emit_var_access(name, ctx)?,
         Expr::List(v) => {
             if let Some((name, args)) = expr.is_primcall() {
@@ -145,7 +170,7 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
                 procedures::emit_fncall(head, args, ctx)?
             } else if v.len() == 0 {
                 // () == Expr::Nil
-                ctx.builder.ins().iconst(ctx.word, expr.immediate_rep())
+                expr.immediate_rep(ctx)
             } else {
                 return Err(format!("illegal function application {:?}", v));
             }
@@ -156,11 +181,12 @@ pub(crate) fn emit_expr(expr: &Expr, ctx: &mut Context) -> Result<Value, String>
                 s
             ))
         }
+        _ => expr.immediate_rep(ctx),
     })
 }
 
 pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
-    let (mut jit, mut unwind_context) = JIT::new();
+    let (mut jit, mut unwind_context) = JIT::new()?;
 
     // Rename symbols so that they are all unique.
     renamer::make_names_unique(program)?;
@@ -203,7 +229,6 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
 
     // Build a map from anonymous names to values
     let fnmap = procedures::build_fn_map(functions, primitive_fns);
-    let lustc_main_id = fnmap.len();
 
     {
         let _t = crate::timer::timeit("procedure compilation");
@@ -225,11 +250,16 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
     let code_fn = {
         let _t = crate::timer::timeit("lust_entry compilation");
 
-        let word = jit.module.target_config().pointer_type();
+        let reftype = jit.reference_type();
+        let wordtype = jit.module.target_config().pointer_type();
 
         // Signature for the function that we're compiling. This function
         // takes no arguments and returns an integer.
-        jit.context.func.signature.returns.push(AbiParam::new(word));
+        jit.context
+            .func
+            .signature
+            .returns
+            .push(AbiParam::new(reftype));
 
         // Create a new builder for building our function and create a new
         // block to compile into.
@@ -243,42 +273,49 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
 
         let env = HashMap::new();
 
-        let mut ctx = Context::new(builder, &mut jit.module, word, env, fnmap, Vec::new());
+        let mut ctx = Context::new(
+            builder,
+            &mut jit.module,
+            reftype,
+            wordtype,
+            env,
+            fnmap,
+            Vec::new(),
+        );
 
         let vals = program
             .iter()
             .map(|e| emit_expr(e, &mut ctx))
             .collect::<Result<Vec<_>, _>>()?;
 
-        // Emit a return instruction to return the result.
-        ctx.builder.ins().return_(&[*vals
+        let rval = *vals
             .last()
-            .ok_or("expected at least one expression".to_string())?]);
+            .ok_or("expected at least one expression".to_string())?;
+        // Emit a return instruction to return the result.
+        ctx.builder.ins().return_(&[rval]);
 
         // Clean up
         ctx.builder.seal_all_blocks();
         ctx.builder.finalize();
-        let maps = ctx.local_collector.get_maps();
 
         let id = jit
             .module
             .declare_function("lust_entry", Linkage::Export, &jit.context.func.signature)
-            .map_err(|e| e.to_string())?;
+            .unwrap();
 
         jit.module
-            .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
-            .map_err(|e| e.to_string())?;
+            .define_function(
+                id,
+                &mut jit.context,
+                &mut codegen::binemit::NullTrapSink {},
+                &mut codegen::binemit::NullStackMapSink {},
+            )
+            .unwrap();
 
         unwind_context.add_function(id, &jit.context, jit.module.isa())?;
-        gc::register_stackmaps(
-            lustc_main_id as i64,
-            &jit.context.func,
-            jit.module.isa(),
-            maps,
-        );
 
         // If you want to dump the generated IR this is the way:
-        // println!("{}", jit.context.func.display(jit.module.isa()));
+        println!("{}", jit.context.func.display(jit.module.isa()));
 
         jit.module.clear_context(&mut jit.context);
 
@@ -298,13 +335,18 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
 /// an expression.
 #[cfg(test)]
 pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
-    let (mut jit, mut unwind_context) = JIT::new();
+    let (mut jit, mut unwind_context) = JIT::new()?;
 
-    let word = jit.module.target_config().pointer_type();
+    let wordtype = jit.module.target_config().pointer_type();
+    let reftype = jit.reference_type();
 
     // Signature for the function that we're compiling. This function
     // takes no arguments and returns an integer.
-    jit.context.func.signature.returns.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .returns
+        .push(AbiParam::new(reftype));
 
     // This manuver is actually so unfourtinate. We basically need to
     // do it because we need to make ctx get dropped so that there
@@ -329,7 +371,8 @@ pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
         let mut ctx = Context::new(
             builder,
             &mut jit.module,
-            word,
+            reftype,
+            wordtype,
             env,
             HashMap::new(),
             Vec::new(),
@@ -352,11 +395,16 @@ pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
     let id = jit
         .module
         .declare_function("lust_entry", Linkage::Export, &signature)
-        .map_err(|e| e.to_string())?;
+        .unwrap();
 
     jit.module
-        .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
-        .map_err(|e| e.to_string())?;
+        .define_function(
+            id,
+            &mut jit.context,
+            &mut codegen::binemit::NullTrapSink {},
+            &mut codegen::binemit::NullStackMapSink {},
+        )
+        .unwrap();
 
     unwind_context.add_function(id, &jit.context, jit.module.isa())?;
 
@@ -375,13 +423,18 @@ pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
 
 #[cfg(test)]
 pub fn roundtrip_exprs(exprs: &[Expr]) -> Result<Expr, String> {
-    let (mut jit, mut unwind_context) = JIT::new();
+    let (mut jit, mut unwind_context) = JIT::new()?;
 
-    let word = jit.module.target_config().pointer_type();
+    let wordtype = jit.module.target_config().pointer_type();
+    let reftype = jit.reference_type();
 
     // Signature for the function that we're compiling. This function
     // takes no arguments and returns an integer.
-    jit.context.func.signature.returns.push(AbiParam::new(word));
+    jit.context
+        .func
+        .signature
+        .returns
+        .push(AbiParam::new(reftype));
 
     // Create a new builder for building our function and create a new
     // block to compile into.
@@ -398,7 +451,8 @@ pub fn roundtrip_exprs(exprs: &[Expr]) -> Result<Expr, String> {
     let mut ctx = Context::new(
         builder,
         &mut jit.module,
-        word,
+        reftype,
+        wordtype,
         env,
         HashMap::new(),
         Vec::new(),
@@ -421,11 +475,16 @@ pub fn roundtrip_exprs(exprs: &[Expr]) -> Result<Expr, String> {
     let id = jit
         .module
         .declare_function("lust_entry", Linkage::Export, &jit.context.func.signature)
-        .map_err(|e| e.to_string())?;
+        .unwrap();
 
     jit.module
-        .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
-        .map_err(|e| e.to_string())?;
+        .define_function(
+            id,
+            &mut jit.context,
+            &mut codegen::binemit::NullTrapSink {},
+            &mut codegen::binemit::NullStackMapSink {},
+        )
+        .unwrap();
 
     unwind_context.add_function(id, &jit.context, jit.module.isa())?;
 

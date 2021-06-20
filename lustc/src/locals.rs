@@ -54,7 +54,7 @@ pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Valu
     // If the value is an escaped value then we allocate space for it
     // on the heap and store its value there.
     let val = if name.starts_with("e_") {
-        let location = emit_alloc(ctx.word.bytes().into(), ctx)?;
+        let location = emit_alloc(ctx.reftype.bytes().into(), ctx)?;
         ctx.builder.ins().store(MemFlags::new(), val, location, 0);
         ctx.local_collector.register_escaped(location);
         location
@@ -73,7 +73,7 @@ pub(crate) fn emit_let(name: &str, val: &Expr, ctx: &mut Context) -> Result<Valu
             name,
             &mut ctx.env,
             &mut ctx.builder,
-            ctx.word,
+            ctx.reftype,
         )?)
     }?;
 
@@ -125,7 +125,7 @@ pub(crate) fn emit_var_access(name: &str, ctx: &mut Context) -> Result<Value, St
         Ok(ctx
             .builder
             .ins()
-            .load(ctx.word, MemFlags::new(), location, 0))
+            .load(ctx.reftype, MemFlags::new(), location, 0))
     } else {
         match ctx.env.get(name) {
             Some(v) => Ok(ctx.builder.use_var(*v)),
@@ -158,7 +158,7 @@ pub(crate) fn emit_var_decl_and_assign(
     val: Value,
     ctx: &mut Context,
 ) -> Result<Variable, String> {
-    let var = emit_declare_var(name, &mut ctx.env, &mut ctx.builder, ctx.word)?;
+    let var = emit_declare_var(name, &mut ctx.env, &mut ctx.builder, ctx.reftype)?;
 
     ctx.builder.def_var(var, val);
     Ok(var)
