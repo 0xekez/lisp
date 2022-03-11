@@ -194,7 +194,7 @@ pub fn emit_procedure(
         .map_err(|e| e.to_string())?;
 
     jit.module
-        .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
+        .define_function(id, &mut jit.context)
         .map_err(|e| e.to_string())?;
 
     // If you want to dump the generated IR this is the way:
