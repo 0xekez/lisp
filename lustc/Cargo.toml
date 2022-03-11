@@ -8,8 +8,9 @@ edition = "2018"
 
 [dependencies]
 colored = "2"
-cranelift = "0.69.0"
-cranelift-module = "0.69.0"
-cranelift-jit = "0.69.0"
-cranelift-codegen = "0.69.0"
+cranelift = "0.81.1"
+cranelift-module = "0.81.1"
+cranelift-jit = "0.81.1"
+cranelift-native = "0.81.1"
+cranelift-codegen = "0.81.1"
 clap = "~2.27.0"

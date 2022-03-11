@@ -66,7 +66,17 @@ pub(crate) struct Context<'a> {
 
 impl Default for JIT {
     fn default() -> Self {
-        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
+        let mut flag_builder = settings::builder();
+        // On at least AArch64, "colocated" calls use shorter-range relocations,
+        // which might not reach all definitions; we can't handle that here, so
+        // we require long-range relocation types.
+        flag_builder.set("use_colocated_libcalls", "false").unwrap();
+        flag_builder.set("is_pic", "false").unwrap();
+        let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
+            panic!("host machine is not supported: {}", msg);
+        });
+        let isa = isa_builder.finish(settings::Flags::new(flag_builder));
+        let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
 
         // Register the print function.
         let print_addr = print_lustc_word as *const u8;
@@ -252,7 +262,7 @@ pub fn roundtrip_program(program: &mut [Expr]) -> Result<Expr, String> {
             .map_err(|e| e.to_string())?;
 
         jit.module
-            .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
+            .define_function(id, &mut jit.context)
             .map_err(|e| e.to_string())?;
 
         // If you want to dump the generated IR this is the way:
@@ -332,7 +342,7 @@ pub fn roundtrip_expr(expr: Expr) -> Result<Expr, String> {
         .map_err(|e| e.to_string())?;
 
     jit.module
-        .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
+        .define_function(id, &mut jit.context)
         .map_err(|e| e.to_string())?;
 
     jit.module.clear_context(&mut jit.context);
@@ -397,7 +407,7 @@ pub fn roundtrip_exprs(exprs: &[Expr]) -> Result<Expr, String> {
         .map_err(|e| e.to_string())?;
 
     jit.module
-        .define_function(id, &mut jit.context, &mut codegen::binemit::NullTrapSink {})
+        .define_function(id, &mut jit.context)
         .map_err(|e| e.to_string())?;
 
     // If you want to dump the generated IR this is the way:

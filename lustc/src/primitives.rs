@@ -10,7 +10,6 @@ use std::collections::HashSet;
 
 use cranelift::frontend::FunctionBuilder;
 use cranelift::prelude::*;
-use cranelift_codegen::binemit::NullTrapSink;
 use cranelift_module::Module;
 
 use crate::compiler::emit_expr;
@@ -92,7 +91,7 @@ where
         .map_err(|e| e.to_string())?;
 
     jit.module
-        .define_function(id, &mut jit.context, &mut NullTrapSink {})
+        .define_function(id, &mut jit.context)
         .map_err(|e| e.to_string())?;
 
     jit.module.clear_context(&mut jit.context);
@@ -1096,7 +1095,7 @@ pub(crate) fn define_contiguous_to_list(jit: &mut JIT) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     jit.module
-        .define_function(id, &mut jit.context, &mut NullTrapSink {})
+        .define_function(id, &mut jit.context)
         .map_err(|e| e.to_string())?;
 
     jit.module.clear_context(&mut jit.context);
