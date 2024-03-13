@@ -1,4 +1,4 @@
-A little lisp compiler and interpereter. The compiler is just in time and written with [Cranelift]([url](https://cranelift.dev/)).
+A little lisp compiler and interpereter. The compiler is just in time and written with [Cranelift](https://cranelift.dev/).
 
 ```lisp
 >> (import 'format)
