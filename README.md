@@ -36,4 +36,5 @@ is much, much quicker.
 
 The compiler also doesn't have a garbage collector yet but who really
 needs one if you can run everything faster than a gc cycle ;)
-[here](https://github.com/ZekeMedley/lust/tree/main/lustc/examples).
+
+[here are example programs](https://github.com/ZekeMedley/lust/tree/main/lustc/examples).
